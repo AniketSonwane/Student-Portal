@@ -459,7 +459,7 @@ export const SettingsPage: React.FC = () => {
                 <CheckCircle2 className="w-6 h-6" />
               </div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                Correction Request Submitted!
+                Request Submitted Successfully!
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto leading-relaxed">
                 Your request has been dispatched to the institutional administration. You can monitor the review status on your academic profile once processed.
