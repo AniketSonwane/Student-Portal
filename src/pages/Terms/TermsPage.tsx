@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { ThemeToggle } from '../../components/common/ThemeToggle';
-import { APP_CONFIG } from '../../utils/constants';
+import { APP_CONFIG, ROUTES } from '../../utils/constants';
 
 export const TermsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -16,7 +16,13 @@ export const TermsPage: React.FC = () => {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate(-1)}
+            onClick={() => {
+              if (window.history.state && typeof window.history.state.idx === 'number' && window.history.state.idx > 0) {
+                navigate(-1);
+              } else {
+                navigate(ROUTES.DASHBOARD);
+              }
+            }}
             leftIcon={<ArrowLeft className="w-4 h-4" />}
             className="px-2.5 sm:px-3 text-xs"
           >
