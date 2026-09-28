@@ -169,9 +169,9 @@ export const profileService = {
     const spreadsheetId = PROFILE_SPREADSHEET_ID;
     const cacheBuster = forceRefresh ? `&_t=${Date.now()}` : '';
     const endpoints = [
-      `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv${cacheBuster}`,
       `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv${cacheBuster}`,
       `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}`,
+      `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv${cacheBuster}`,
     ];
 
     let csvText: string | null = null;

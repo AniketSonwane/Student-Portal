@@ -108,9 +108,9 @@ export const authService = {
     }
 
     // Fetch live roster directly from Google Sheet (with fallback to 68 authorized students)
-    let roster = AUTHORIZED_STUDENTS_ROSTER;
+    let roster: Student[] = AUTHORIZED_STUDENTS_ROSTER;
     try {
-      const sheetRes = await profileService.fetchAllStudents();
+      const sheetRes = await profileService.fetchAllStudents(true);
       if (sheetRes.success && sheetRes.data && sheetRes.data.length > 0) {
         roster = sheetRes.data;
       }
@@ -135,12 +135,16 @@ export const authService = {
       };
     }
 
-    // Strict match: ONLY the college_email from the student details sheet (68 students)
+    // Strict match against live student details from Google Sheet
     const student = roster.find((s) => {
       const colEmail = (s.college_email || '').trim().toLowerCase();
-      if (!colEmail || colEmail === 'na') return false;
+      const persEmail = (s.personal_email || '').trim().toLowerCase();
+      const googEmail = (s.google_email || '').trim().toLowerCase();
 
-      if (colEmail === rawEmail) return true;
+      // Check college email ID, google email ID, and personal email ID from sheet
+      if (colEmail && colEmail !== 'na' && colEmail === rawEmail) return true;
+      if (googEmail && googEmail !== 'na' && googEmail === rawEmail) return true;
+      if (persEmail && persEmail !== 'na' && persEmail === rawEmail) return true;
 
       // Handle the minor typo in sheet row 47 (sbit.edu.in vs sbjit.edu.in)
       if (
