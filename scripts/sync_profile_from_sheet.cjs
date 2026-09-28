@@ -145,7 +145,18 @@ async function run() {
 // Spreadsheet ID: 18HdmD-3Ae0gZ_jlVOjBWjQaidlSG9aezDepjggong9k
 import { Student } from '../types/auth';
 
-export const ALL_STUDENTS_ROSTER: Student[] = ${JSON.stringify(students, null, 2)};
+export const AUTHORIZED_STUDENTS_ROSTER: Student[] = ${JSON.stringify(students, null, 2)};
+
+export const ALL_STUDENTS_ROSTER: Student[] = AUTHORIZED_STUDENTS_ROSTER;
+
+/**
+ * Quick set of lowercase authorized college email IDs for O(1) authorization checks
+ */
+export const AUTHORIZED_COLLEGE_EMAILS: Set<string> = new Set(
+  AUTHORIZED_STUDENTS_ROSTER
+    .map((s: Student) => (s.college_email || '').trim().toLowerCase())
+    .filter((email: string) => email.length > 0 && email !== 'na')
+);
 `;
 
   fs.writeFileSync('src/data/studentsRoster.ts', rosterTs, 'utf8');
