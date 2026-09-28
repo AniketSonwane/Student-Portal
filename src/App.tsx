@@ -16,6 +16,7 @@ import { InteractiveGridBackground } from './components/common/InteractiveGridBa
 import { BottomNav } from './components/layout/BottomNav';
 import { Footer } from './components/layout/Footer';
 import { AdminInspectionBanner } from './components/layout/AdminInspectionBanner';
+import { ScrollToTop } from './components/common/ScrollToTop';
 import { ROUTES } from './utils/constants';
 
 // Protected Route Guard
@@ -66,6 +67,9 @@ export const App: React.FC = () => {
         {/* Content Layer */}
         <div className="relative z-10 min-h-screen flex flex-col justify-between">
           <BrowserRouter>
+            {/* Automatically scroll to top on every page / route change */}
+            <ScrollToTop />
+
             {/* Admin Inspection Banner: Displays Back to Admin Dashboard button */}
             <AdminInspectionBanner />
 

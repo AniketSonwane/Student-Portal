@@ -111,18 +111,26 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const handleBack = () => {
+    if (window.history.state && typeof window.history.state.idx === 'number' && window.history.state.idx > 0) {
+      navigate(-1);
+    } else {
+      navigate(ROUTES.DASHBOARD);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-transparent text-slate-900 dark:text-slate-100 flex flex-col justify-between py-4 sm:py-6 px-3 sm:px-6 transition-colors duration-200">
       <div className="max-w-xl w-full mx-auto flex-1 flex flex-col justify-center">
         {/* Top Header Bar */}
-        <header className="flex items-center justify-center sm:justify-between gap-3 mb-6 sm:mb-8 pb-3.5 border-b border-slate-200/90 dark:border-[#222228]">
-          {/* Back button (desktop/tablet only; on phone bottom nav is used) */}
+        <header className="flex items-center justify-between gap-3 mb-6 sm:mb-8 pb-3.5 border-b border-slate-200/90 dark:border-[#222228]">
+          {/* Back button (visible across all screen sizes with safe fallback) */}
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate(-1)}
+            onClick={handleBack}
             leftIcon={<ArrowLeft className="w-4 h-4" />}
-            className="hidden sm:inline-flex px-2.5 sm:px-3 text-xs min-h-[36px] touch-manipulation"
+            className="inline-flex px-2.5 sm:px-3 text-xs min-h-[36px] touch-manipulation"
           >
             <span>Back</span>
           </Button>
@@ -137,8 +145,8 @@ export const SettingsPage: React.FC = () => {
             </h1>
           </div>
 
-          {/* Empty spacer to keep Settings title centered on desktop */}
-          <div className="hidden sm:block w-[68px]" aria-hidden="true" />
+          {/* Empty spacer to keep Settings title centered */}
+          <div className="w-[68px]" aria-hidden="true" />
         </header>
 
         {isLoading ? (
@@ -451,11 +459,8 @@ export const SettingsPage: React.FC = () => {
                 <CheckCircle2 className="w-6 h-6" />
               </div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                Correction Request Submitted!
+                Request Submitted Successfully!
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto leading-relaxed">
-                Your request has been dispatched to the institutional administration. You can monitor the review status on your academic profile once processed.
-              </p>
             </div>
           ) : (
             <form onSubmit={handleSubmitChangeRequest} className="space-y-4">
