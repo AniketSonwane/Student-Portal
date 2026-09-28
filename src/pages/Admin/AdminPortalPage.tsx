@@ -19,7 +19,6 @@ import {
   ChevronRight,
   Sparkles,
   UserCheck,
-  Mail,
 } from 'lucide-react';
 import { adminSheetService } from '../../services/adminSheetService';
 import { AUTHORIZED_STUDENTS_ROSTER } from '../../data/studentsRoster';
@@ -365,12 +364,6 @@ function doPost(e) {
                 <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
                   Administrator Portal
                 </h1>
-                <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#8048A8]/10 dark:bg-[#8048A8]/20 border border-[#8048A8]/30 text-xs">
-                  <Mail className="w-3 h-3 text-[#8048A8] dark:text-[#D1A7FF]" />
-                  <span className="font-mono font-medium text-[#8048A8] dark:text-[#D1A7FF]">
-                    2007aniketsonwane@gmail.com
-                  </span>
-                </div>
               </div>
 
               {/* Error Alert */}
