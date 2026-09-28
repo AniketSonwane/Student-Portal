@@ -1,0 +1,32 @@
+:root {
+  /* Highlights / Accents only */
+  --highlight-purple: #8048A8;
+  --highlight-purple-glow: rgba(128, 72, 168, 0.25);
+  --highlight-gold: #F8D299;
+  --highlight-orange: #F59E51;
+  
+  /* Neutral Light Theme */
+  --bg-app: #F8F9FA;
+  --bg-surface: #FFFFFF;
+  --bg-surface-hover: #F3F4F6;
+  --border-color: #E2E8F0;
+  --text-main: #0F172A;
+  --text-muted: #64748B;
+}
+
+.dark {
+  /* Highlights / Accents only */
+  --highlight-purple: #9D5BD2;
+  --highlight-purple-glow: rgba(157, 91, 210, 0.3);
+  --highlight-gold: #F8D299;
+  --highlight-orange: #F59E51;
+
+  /* True Black Dark Theme */
+  --bg-app: #000000;
+  --bg-surface: #0B0B0D;
+  --bg-surface-card: #111114;
+  --bg-surface-hover: #18181D;
+  --border-color: #222228;
+  --text-main: #F8FAFC;
+  --text-muted: #94A3B8;
+}

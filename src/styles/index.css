@@ -1,0 +1,250 @@
+@import './theme.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: theme('colors.slate.200');
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .dark * {
+    border-color: #27272A;
+  }
+
+  body {
+    background-color: var(--bg-app);
+    color: var(--text-main);
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    transition: background-color 350ms cubic-bezier(0.4, 0, 0.2, 1), color 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Smooth transition for theme colors on surfaces and borders */
+  header,
+  nav,
+  main,
+  footer,
+  aside,
+  section,
+  article {
+    transition: background-color 350ms cubic-bezier(0.4, 0, 0.2, 1), border-color 350ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+/* Smooth View Transition cross-fade */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 350ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Smooth theme change fallback for non-view-transition browsers */
+html.theme-transitioning,
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition: background-color 350ms cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 350ms cubic-bezier(0.4, 0, 0.2, 1),
+              color 300ms cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 350ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Mobile responsive utilities */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Touch momentum scrolling for smooth mobile experience */
+.touch-scroll {
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+
+/* Safe area insets helpers for notched phones and mobile gesture bars */
+.pb-safe {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 16px));
+}
+
+.pt-safe {
+  padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+}
+
+/* Prevent iOS Safari from automatically zooming in on text input focus */
+@media (max-width: 640px) {
+  input[type="text"],
+  input[type="email"],
+  input[type="search"],
+  input[type="password"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* 1. Google Stitch Base Pattern (Square Grid with Center Coordinates) */
+.stitch-grid-base {
+  background-size: 32px 32px;
+  background-image: 
+    radial-gradient(circle 1px at 16px 16px, rgba(0, 0, 0, 0.16) 1px, transparent 0),
+    linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+}
+
+.dark .stitch-grid-base {
+  background-size: 32px 32px;
+  background-image: 
+    radial-gradient(circle 1px at 16px 16px, rgba(255, 255, 255, 0.22) 1px, transparent 0),
+    linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+}
+
+/* 2. Google Stitch Reactive Glow Grid (Illuminated by cursor mask) */
+.stitch-grid-glow {
+  background-size: 32px 32px;
+  background-image: 
+    radial-gradient(circle 1.5px at 16px 16px, rgba(128, 72, 168, 0.95) 1.5px, transparent 0),
+    linear-gradient(to right, rgba(128, 72, 168, 0.3) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(128, 72, 168, 0.3) 1px, transparent 1px);
+}
+
+.dark .stitch-grid-glow {
+  background-size: 32px 32px;
+  background-image: 
+    radial-gradient(circle 1.5px at 16px 16px, rgba(255, 255, 255, 1) 1.5px, transparent 0),
+    linear-gradient(to right, rgba(157, 91, 210, 0.4) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(157, 91, 210, 0.4) 1px, transparent 1px);
+}
+
+/* Legacy fallbacks */
+.bg-graph-technical {
+  background-color: transparent;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.dark .glass-card {
+  background: rgba(13, 13, 16, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* Card select pulse and interactive hover utilities */
+@keyframes card-select-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(128, 72, 168, 0.45);
+  }
+  60% {
+    box-shadow: 0 0 0 6px rgba(128, 72, 168, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(128, 72, 168, 0);
+  }
+}
+
+.animate-select-pulse {
+  animation: card-select-pulse 500ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Dedicated infinite spinner for loading rings */
+@keyframes portalSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.portal-spinner {
+  animation: portalSpin 0.85s linear infinite !important;
+}
+
+/* Smooth fade and gentle upward glide transition for portal content loading */
+@keyframes fadeInSlideUp {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeInSlideUp 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+/* Smooth dissolve exit for loading cards */
+@keyframes fadeOutSlideDown {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0);
+  }
+}
+
+.animate-fade-out {
+  animation: fadeOutSlideDown 180ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+/* Smooth GPU-accelerated staggered card glide-in for portal content */
+@keyframes smoothCardSlideUp {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-card-slide-1,
+.animate-card-slide-2,
+.animate-card-slide-3,
+.animate-card-slide-4 {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+.animate-card-slide-1 {
+  animation: smoothCardSlideUp 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 0ms;
+}
+
+.animate-card-slide-2 {
+  animation: smoothCardSlideUp 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 65ms;
+}
+
+.animate-card-slide-3 {
+  animation: smoothCardSlideUp 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 130ms;
+}
+
+.animate-card-slide-4 {
+  animation: smoothCardSlideUp 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 195ms;
+}
+
