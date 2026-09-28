@@ -39,7 +39,7 @@ export const LoginPage: React.FC = () => {
   useEffect(() => {
     const clientId =
       import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-      '680316571772-18ug4g3si6294lh7i78elk9q4rir0es6.apps.googleusercontent.com';
+      '111999142134-d0g34vjirc6n60tvuv1avb0rm6j014a1.apps.googleusercontent.com';
     if (!clientId || clientId.includes('your_google_client_id')) return;
 
     const initGoogleAuth = () => {
@@ -117,7 +117,7 @@ export const LoginPage: React.FC = () => {
     clearError();
     const clientId =
       import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-      '680316571772-18ug4g3si6294lh7i78elk9q4rir0es6.apps.googleusercontent.com';
+      '111999142134-d0g34vjirc6n60tvuv1avb0rm6j014a1.apps.googleusercontent.com';
 
     if (clientId && !clientId.includes('your_google_client_id') && window.google?.accounts?.id) {
       try {
