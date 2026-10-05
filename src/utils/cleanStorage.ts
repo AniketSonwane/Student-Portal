@@ -42,27 +42,8 @@ export const cleanupUnnecessaryStorage = (): void => {
       localStorage.removeItem('student_portal_admin_sheet_url');
     }
 
-    // 4. Sanitize admin logs cache: purge mock/seed entries
-    const logsRaw = localStorage.getItem('student_portal_admin_logs');
-    if (logsRaw) {
-      try {
-        const parsed = JSON.parse(logsRaw);
-        if (Array.isArray(parsed)) {
-          const cleaned = parsed.filter(
-            (l: any) =>
-              l &&
-              l.id &&
-              !String(l.id).startsWith('log-10') &&
-              !String(l.id).startsWith('test-') &&
-              l.student_name !== 'Unknown User' &&
-              !l.reason?.includes('Admin')
-          );
-          localStorage.setItem('student_portal_admin_logs', JSON.stringify(cleaned));
-        }
-      } catch {
-        localStorage.removeItem('student_portal_admin_logs');
-      }
-    }
+    // 4. Purge local logs cache (login logs are directly synced with Google Sheet, not stored in localStorage)
+    localStorage.removeItem('student_portal_admin_logs');
 
     // 5. Sanitize admin change requests cache: purge mock entries
     const reqsRaw = localStorage.getItem('student_portal_admin_change_requests');

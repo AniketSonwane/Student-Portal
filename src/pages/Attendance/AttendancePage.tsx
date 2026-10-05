@@ -271,6 +271,13 @@ export const AttendancePage: React.FC = () => {
                         }`}>
                           {sub.percentage}%
                         </span>
+                        {sub.attendedDisplay && (
+                          <span className="block text-[10px] font-mono text-slate-400 dark:text-zinc-500">
+                            {sub.category === 'MDM' || sub.category === 'OE'
+                              ? `${sub.attendedLectures ?? sub.attendedDisplay} Attended`
+                              : sub.attendedDisplay}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))
@@ -347,7 +354,7 @@ export const AttendancePage: React.FC = () => {
           <div className="bg-white/90 dark:bg-[#0D0D12]/90 backdrop-blur-xl rounded-3xl border border-slate-200/90 dark:border-[#22222C] shadow-xl overflow-hidden transition-all duration-300 animate-card-slide-1">
             {/* Card Header: User Name (Left) & Total Avg (Right) */}
             <div className="p-4 sm:p-6 pb-5 sm:pb-6 border-b border-slate-200/80 dark:border-[#1E1E26] bg-gradient-to-r from-slate-50/50 via-white/40 to-amber-50/20 dark:from-[#111117] dark:via-[#0E0E14] dark:to-[#171410] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              {/* Left: User Name & Details (SRN removed as requested) */}
+              {/* Left: User Name & Details */}
               <div className="space-y-1 min-w-0">
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#8048A8]/10 dark:bg-[#8048A8]/20 text-[#8048A8] dark:text-[#D1A7FF] border border-[#8048A8]/30">
                   <ShieldCheck className="w-3 h-3 text-[#F8D299]" />
@@ -440,13 +447,20 @@ export const AttendancePage: React.FC = () => {
                 </div>
               ) : (
                 /* Grid of Subject Cards */
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3 sm:gap-4">
                   {filteredSubjects.map((sub) => {
                     const isSafe = sub.numericPercentage >= 75;
                     const isWarning = sub.numericPercentage >= 65 && sub.numericPercentage < 75;
                     const isMdm = sub.category === 'MDM';
                     const isOe = sub.category === 'OE';
+                    const isElective = isMdm || isOe;
                     const isSelected = activeSubjectCode === sub.code;
+                    const isLab = sub.code.endsWith('L') || sub.name.toLowerCase().includes('lab');
+                    const hasLectures = sub.attendedLectures !== undefined;
+                    const missedClasses =
+                      sub.totalLectures !== undefined && sub.attendedLectures !== undefined
+                        ? Math.max(0, sub.totalLectures - sub.attendedLectures)
+                        : undefined;
 
                     return (
                       <div
@@ -476,13 +490,21 @@ export const AttendancePage: React.FC = () => {
                         />
 
                         <div>
-                          {/* Header: Code */}
-                          <div className="flex items-center justify-between gap-2 mb-1.5">
-                            <span
-                              className="inline-flex items-center gap-1 font-mono text-xs font-extrabold px-2 py-0.5 rounded-md border bg-slate-100 dark:bg-[#1C1C24] text-slate-800 dark:text-slate-200 border-slate-200 dark:border-[#282834]"
-                            >
-                              {sub.code}
-                            </span>
+                          {/* Header: Code & Badges */}
+                          <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-xs font-extrabold px-2 py-0.5 rounded-md border bg-slate-100 dark:bg-[#1C1C24] text-slate-800 dark:text-slate-200 border-slate-200 dark:border-[#282834]">
+                                {sub.code}
+                              </span>
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 border border-slate-200/60 dark:border-zinc-700/60">
+                                {isLab ? 'Lab' : 'Theory'}
+                              </span>
+                              {sub.category && (
+                                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-[#8048A8]/10 dark:bg-[#8048A8]/20 text-[#8048A8] dark:text-[#D1A7FF] border border-[#8048A8]/30">
+                                  {sub.category}
+                                </span>
+                              )}
+                            </div>
                             {isSelected && (
                               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#8048A8]/20 text-[#8048A8] dark:text-[#D1A7FF]">
                                 Selected
@@ -499,12 +521,29 @@ export const AttendancePage: React.FC = () => {
                           </h4>
                         </div>
 
-                        {/* Percentage & Progress Bar (target: 75% removed as requested) */}
-                        <div className="space-y-1.5 pt-1">
-                          <div className="flex items-baseline justify-between">
+                        {/* Percentage & Attended Count & Progress Bar */}
+                        <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-[#1E1E28]">
+                          <div className="flex items-center justify-between gap-1.5 flex-wrap min-w-0">
                             <span className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
                               {sub.percentage}%
                             </span>
+
+                            {/* Attended Count Pill */}
+                            {hasLectures && (
+                              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100/90 dark:bg-[#1A1A24] border border-slate-200/80 dark:border-[#282836] shadow-sm text-xs flex-shrink-0">
+                                <span className="text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500">
+                                  Attended
+                                </span>
+                                <span className="font-mono text-xs font-bold text-slate-900 dark:text-white">
+                                  <span className="text-[#8048A8] dark:text-[#D1A7FF] font-black">{sub.attendedLectures}</span>
+                                  {sub.totalLectures !== undefined && !isElective && (
+                                    <span className="text-slate-400 dark:text-slate-500 font-semibold">
+                                      /{sub.totalLectures}
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
                           </div>
 
                           {/* Visual Progress Bar */}
@@ -523,6 +562,41 @@ export const AttendancePage: React.FC = () => {
                               }`}
                               style={{ width: `${Math.min(100, Math.max(0, sub.numericPercentage))}%` }}
                             />
+                          </div>
+
+                          {/* Sub-footer detail: Missed classes & session info */}
+                          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-0.5 gap-2 flex-wrap">
+                            {missedClasses !== undefined && !isElective ? (
+                              <>
+                                <span className="truncate">
+                                  {missedClasses === 0 ? (
+                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold inline-flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
+                                      100% Present
+                                    </span>
+                                  ) : (
+                                    <span>
+                                      Missed: <strong className="text-rose-600 dark:text-rose-400 font-semibold">{missedClasses}</strong> {isLab ? (missedClasses === 1 ? 'lab' : 'labs') : (missedClasses === 1 ? 'class' : 'classes')}
+                                    </span>
+                                  )}
+                                </span>
+                                {sub.totalLectures !== undefined && (
+                                  <span className="text-[10px] font-medium text-slate-400 dark:text-zinc-500 flex-shrink-0">
+                                    Total: {sub.totalLectures} {isLab ? 'Labs' : 'Lec'}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-[11px] font-medium text-slate-600 dark:text-zinc-300">
+                                {sub.attendedLectures !== undefined ? (
+                                  <span>
+                                    Attended: <strong className="text-slate-900 dark:text-white font-bold">{sub.attendedLectures}</strong> {isLab ? (sub.attendedLectures === 1 ? 'lab' : 'labs') : (sub.attendedLectures === 1 ? 'lecture' : 'lectures')}
+                                  </span>
+                                ) : (
+                                  <span>Course Attendance</span>
+                                )}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>

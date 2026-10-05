@@ -91,27 +91,17 @@ export const adminSheetService = {
 
 
 
+  _cachedLogs: [] as LoginLog[],
+
   /**
-   * Retrieve all Login Logs (purging any legacy demo logs)
+   * Retrieve all Login Logs (in-memory, direct synced with Google Sheet, no localStorage)
    */
   getLogs(): LoginLog[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.LOGS);
-    if (!raw) return [];
-    try {
-      const parsed: LoginLog[] = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      // Filter out any mock/seed demo records and any admin actions
-      return parsed.filter(
-        (l) =>
-          !l.id.startsWith('log-10') &&
-          l.student_name !== 'Unknown User' &&
-          !l.id.startsWith('test-') &&
-          !this.isAuthorizedAdminEmail(l.email) &&
-          !l.reason?.includes('Admin')
-      );
-    } catch {
-      return [];
+    // Purge any legacy logs from localStorage
+    if (localStorage.getItem(STORAGE_KEYS.LOGS)) {
+      localStorage.removeItem(STORAGE_KEYS.LOGS);
     }
+    return this._cachedLogs || [];
   },
 
   /**
@@ -153,15 +143,16 @@ export const adminSheetService = {
         for (let i = 1; i < rawData.logs.length; i++) {
           const row = rawData.logs[i];
           if (!row || !row[0]) continue;
+          const rawStatus = String(row[5] || '').toUpperCase();
           parsedLogs.push({
             id: String(row[0]),
             timestamp: row[1] ? new Date(row[1]).toISOString() : new Date().toISOString(),
-            student_name: String(row[2] || 'Unknown Student'),
+            student_name: String(row[2] || 'Unknown User'),
             usn: String(row[3] || 'N/A'),
             email: String(row[4] || ''),
             status:
-              String(row[5]).toUpperCase() === 'DENIED' || String(row[5]).toUpperCase() === 'BLOCKED'
-                ? (String(row[5]).toUpperCase() as any)
+              rawStatus === 'DENIED' || rawStatus === 'BLOCKED'
+                ? (rawStatus as any)
                 : 'SUCCESS',
             device: String(row[6] || 'Web Browser'),
             reason: String(row[7] || ''),
@@ -170,16 +161,18 @@ export const adminSheetService = {
         parsedLogs.reverse();
       }
 
-      // Always store sheet logs (and filter any demo logs and admin logs)
+      // Filter out demo seed logs and admin actions, but KEEP all real successful, denied, and unknown student logins!
       parsedLogs = parsedLogs.filter(
         (l) =>
           !l.id.startsWith('log-10') &&
-          l.student_name !== 'Unknown User' &&
           !l.id.startsWith('test-') &&
           !this.isAuthorizedAdminEmail(l.email) &&
           !l.reason?.includes('Admin')
       );
-      localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(parsedLogs));
+
+      // Keep directly in-memory cache, do NOT store logs in localStorage
+      this._cachedLogs = parsedLogs;
+      localStorage.removeItem(STORAGE_KEYS.LOGS);
 
       // 2. Parse Change Requests from sheet
       let parsedRequests: ChangeRequest[] = [];
@@ -216,11 +209,15 @@ export const adminSheetService = {
           if (key === 'is_locked') {
             currentSettings.is_locked = val === true || String(val).toUpperCase() === 'TRUE';
           }
-          if (key === 'lock_reason' && val) {
+          if (key === 'lock_reason' && val !== undefined) {
             currentSettings.lock_reason = String(val);
           }
         }
         localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(currentSettings));
+        this._lastSettingsFetch = Date.now();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('portal_settings_changed', { detail: currentSettings }));
+        }
       }
 
       return {
@@ -242,7 +239,7 @@ export const adminSheetService = {
   },
 
   /**
-   * Record a new student login event (called during authentication)
+   * Record a new student login event (directly synced to Google Sheet, no localStorage)
    */
   async recordLog(data: {
     email: string;
@@ -266,22 +263,22 @@ export const adminSheetService = {
     const newLog: LoginLog = {
       id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       timestamp: new Date().toISOString(),
-      student_name: data.student_name || 'Unknown Student',
+      student_name: data.student_name || 'Unknown User',
       email: data.email,
       usn: data.usn || 'N/A',
       status: data.status,
       device,
-      reason: data.reason,
+      reason: data.reason || (data.status === 'DENIED' ? 'Unauthorized email account' : ''),
     };
 
-    // Save to local storage
-    const logs = this.getLogs();
-    logs.unshift(newLog);
-    // Keep max 500 logs locally
-    if (logs.length > 500) logs.length = 500;
-    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(logs));
+    // Update in-memory cache
+    if (!this._cachedLogs) this._cachedLogs = [];
+    this._cachedLogs.unshift(newLog);
 
-    // Try sending to Google Apps Script Web App if configured
+    // Keep localStorage free of login logs
+    localStorage.removeItem(STORAGE_KEYS.LOGS);
+
+    // Directly sync log to Google Apps Script Web App
     const scriptUrl = this.getScriptUrl();
     if (scriptUrl) {
       try {
@@ -306,7 +303,8 @@ export const adminSheetService = {
    * Clear all login logs (admin action)
    */
   clearLogs() {
-    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify([]));
+    this._cachedLogs = [];
+    localStorage.removeItem(STORAGE_KEYS.LOGS);
   },
 
   /**
@@ -422,6 +420,54 @@ export const adminSheetService = {
     return true;
   },
 
+  _lastSettingsFetch: 0,
+
+  /**
+   * Fetch live portal settings directly from Google Apps Script Web App
+   */
+  async fetchLiveSettings(forceRefresh = false): Promise<PortalSettings> {
+    const cached = this.getPortalSettings();
+    const now = Date.now();
+    // Cache for 15 seconds unless forced
+    if (!forceRefresh && this._lastSettingsFetch && now - this._lastSettingsFetch < 15000) {
+      return cached;
+    }
+
+    const scriptUrl = this.getScriptUrl();
+    if (!scriptUrl) return cached;
+
+    try {
+      const response = await fetch(scriptUrl);
+      if (!response.ok) return cached;
+      const json = await response.json();
+      if (!json.success || !json.data || !json.data.settings) return cached;
+
+      const rawSettings = json.data.settings;
+      if (Array.isArray(rawSettings) && rawSettings.length > 0) {
+        for (const row of rawSettings) {
+          if (!row || !row[0]) continue;
+          const key = String(row[0]).trim().toLowerCase();
+          const val = row[1];
+          if (key === 'is_locked') {
+            cached.is_locked = val === true || String(val).toUpperCase() === 'TRUE';
+          }
+          if (key === 'lock_reason' && val !== undefined) {
+            cached.lock_reason = String(val);
+          }
+        }
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(cached));
+        this._lastSettingsFetch = now;
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('portal_settings_changed', { detail: cached }));
+        }
+      }
+      return cached;
+    } catch (err) {
+      console.warn('Could not fetch live settings from Google Sheet:', err);
+      return cached;
+    }
+  },
+
   /**
    * Retrieve Portal Settings (Lock status, maintenance message)
    */
@@ -453,7 +499,7 @@ export const adminSheetService = {
   async setPortalLock(locked: boolean, reason?: string): Promise<PortalSettings> {
     const current = this.getPortalSettings();
     current.is_locked = locked;
-    if (reason) current.lock_reason = reason;
+    if (reason !== undefined) current.lock_reason = reason;
     if (locked) {
       current.locked_at = new Date().toISOString();
       current.locked_by = 'Administrator';
@@ -462,6 +508,10 @@ export const adminSheetService = {
     }
 
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(current));
+    this._lastSettingsFetch = Date.now();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('portal_settings_changed', { detail: current }));
+    }
 
     const scriptUrl = this.getScriptUrl();
     if (scriptUrl) {
@@ -488,8 +538,8 @@ export const adminSheetService = {
   /**
    * Calculate aggregated Admin Dashboard stats
    */
-  getAdminStats(): AdminStats {
-    const logs = this.getLogs();
+  getAdminStats(passedLogs?: LoginLog[]): AdminStats {
+    const logs = passedLogs || this.getLogs();
     const requests = this.getChangeRequests();
     const settings = this.getPortalSettings();
 
@@ -513,8 +563,8 @@ export const adminSheetService = {
   /**
    * Export logs as CSV format string
    */
-  exportLogsCSV(): string {
-    const logs = this.getLogs();
+  exportLogsCSV(passedLogs?: LoginLog[]): string {
+    const logs = passedLogs || this.getLogs();
     const headers = ['ID', 'Timestamp', 'Student Name', 'USN', 'Email', 'Status', 'Device', 'Reason'];
     const rows = logs.map((l) => [
       `"${l.id}"`,

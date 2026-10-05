@@ -5,8 +5,51 @@ import { AUTHORIZED_STUDENTS_ROSTER, AUTHORIZED_COLLEGE_EMAILS } from '../data/s
 
 const TOKEN_KEY = 'student_portal_token';
 const USER_KEY = 'student_portal_user';
+const LOGIN_TIME_KEY = 'student_portal_login_time';
+
+export const SESSION_DURATION_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
 
 export const authService = {
+  /**
+   * Session duration: 30 minutes in milliseconds
+   */
+  SESSION_DURATION_MS,
+
+  /**
+   * Save login timestamp
+   */
+  setLoginTime(timestamp: number = Date.now()) {
+    localStorage.setItem(LOGIN_TIME_KEY, timestamp.toString());
+  },
+
+  /**
+   * Retrieve login timestamp
+   */
+  getLoginTime(): number | null {
+    const raw = localStorage.getItem(LOGIN_TIME_KEY);
+    if (!raw) return null;
+    const time = parseInt(raw, 10);
+    return isNaN(time) ? null : time;
+  },
+
+  /**
+   * Check if current session has expired (after 30 minutes of login)
+   */
+  isSessionExpired(): boolean {
+    const loginTime = this.getLoginTime();
+    if (!loginTime) return true;
+    return Date.now() - loginTime >= SESSION_DURATION_MS;
+  },
+
+  /**
+   * Get remaining session time in milliseconds
+   */
+  getRemainingSessionTime(): number {
+    const loginTime = this.getLoginTime();
+    if (!loginTime) return 0;
+    return Math.max(0, SESSION_DURATION_MS - (Date.now() - loginTime));
+  },
+
   /**
    * Check whether an email belongs to the 68 authorized college email IDs in the student directory.
    */
@@ -107,20 +150,9 @@ export const authService = {
       };
     }
 
-    // Fetch live roster directly from Google Sheet (with fallback to 68 authorized students)
-    let roster: Student[] = AUTHORIZED_STUDENTS_ROSTER;
-    try {
-      const sheetRes = await profileService.fetchAllStudents(true);
-      if (sheetRes.success && sheetRes.data && sheetRes.data.length > 0) {
-        roster = sheetRes.data;
-      }
-    } catch {
-      roster = AUTHORIZED_STUDENTS_ROSTER;
-    }
-
-    // Check if portal is locked by admin
-    const settings = adminSheetService.getPortalSettings();
-    if (settings.is_locked) {
+    // Check if portal is locked by admin (fetch live settings)
+    const settings = await adminSheetService.fetchLiveSettings(true);
+    if (settings.is_locked && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
       await adminSheetService.recordLog({
         email: rawEmail,
         status: 'BLOCKED',
@@ -133,6 +165,17 @@ export const authService = {
           message: settings.lock_reason || 'The student portal is temporarily locked by the administrator for maintenance.',
         },
       };
+    }
+
+    // Fetch live roster directly from Google Sheet (with fallback to 68 authorized students)
+    let roster: Student[] = AUTHORIZED_STUDENTS_ROSTER;
+    try {
+      const sheetRes = await profileService.fetchAllStudents(true);
+      if (sheetRes.success && sheetRes.data && sheetRes.data.length > 0) {
+        roster = sheetRes.data;
+      }
+    } catch {
+      roster = AUTHORIZED_STUDENTS_ROSTER;
     }
 
     // Strict match against live student details from Google Sheet
@@ -186,6 +229,7 @@ export const authService = {
     const mockToken = `portal_jwt_${student.student_id}_${Date.now()}`;
     localStorage.setItem(TOKEN_KEY, mockToken);
     localStorage.setItem(USER_KEY, JSON.stringify(student));
+    this.setLoginTime();
 
     return {
       success: true,
@@ -239,6 +283,7 @@ export const authService = {
     const mockToken = `portal_jwt_${student.student_id}_${Date.now()}`;
     localStorage.setItem(TOKEN_KEY, mockToken);
     localStorage.setItem(USER_KEY, JSON.stringify(student));
+    this.setLoginTime();
 
     return {
       success: true,
@@ -286,6 +331,7 @@ export const authService = {
   logout() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(LOGIN_TIME_KEY);
     localStorage.removeItem('student_portal_admin_inspecting');
   },
 };

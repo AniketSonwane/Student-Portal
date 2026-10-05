@@ -77,9 +77,10 @@ npm install
 ```
 
 ### 2. Configure Environment Variables
-Copy `.env.example` to `.env` and provide your Google OAuth Client ID and Google Sheets configuration:
-```bash
-cp .env.example .env
+Create a `.env` file in the project root:
+```env
+VITE_GOOGLE_CLIENT_ID=your_google_oauth_client_id
+VITE_ADMIN_SHEET_URL=your_google_apps_script_exec_url
 ```
 
 ### 3. Run Locally

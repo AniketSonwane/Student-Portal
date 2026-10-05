@@ -19,6 +19,8 @@ import {
   ChevronRight,
   Sparkles,
   UserCheck,
+  RefreshCw,
+  Download,
 } from 'lucide-react';
 import { adminSheetService } from '../../services/adminSheetService';
 import { AUTHORIZED_STUDENTS_ROSTER } from '../../data/studentsRoster';
@@ -51,7 +53,6 @@ export const AdminPortalPage: React.FC = () => {
 
   // Search & Filter States
   const [logSearch, setLogSearch] = useState('');
-  const [logFilter, setLogFilter] = useState<'ALL' | 'SUCCESS' | 'DENIED'>('ALL');
   const [requestFilter, setRequestFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
 
   // Modals & Panels
@@ -60,7 +61,16 @@ export const AdminPortalPage: React.FC = () => {
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [showLockConfirmModal, setShowLockConfirmModal] = useState(false);
   const [lockReasonInput, setLockReasonInput] = useState(settings.lock_reason || 'System maintenance in progress.');
+  const [isUpdatingLock, setIsUpdatingLock] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+
+  // Sync reason input whenever live settings are fetched
+  useEffect(() => {
+    if (settings.lock_reason) {
+      setLockReasonInput(settings.lock_reason);
+    }
+  }, [settings.lock_reason]);
 
   // Script URL Configuration
   const [scriptUrlInput, setScriptUrlInput] = useState(() => adminSheetService.getScriptUrl());
@@ -83,23 +93,27 @@ export const AdminPortalPage: React.FC = () => {
     );
   }, [allStudents, studentSearchQuery]);
 
-  // Filtered Logs
+  const [logStatusFilter, setLogStatusFilter] = useState<'ALL' | 'SUCCESS' | 'DENIED'>('ALL');
+
+  // Filtered Logs (includes successful, denied, blocked, and unknown login attempts)
   const filteredLogs = useMemo(() => {
     return logs.filter((log) => {
+      if (logStatusFilter === 'SUCCESS' && log.status !== 'SUCCESS') return false;
+      if (logStatusFilter === 'DENIED' && log.status !== 'DENIED' && log.status !== 'BLOCKED') return false;
+
+      const q = logSearch.toLowerCase().trim();
+      if (!q) return true;
+
       const matchesSearch =
-        log.student_name.toLowerCase().includes(logSearch.toLowerCase()) ||
-        log.email.toLowerCase().includes(logSearch.toLowerCase()) ||
-        log.usn.toLowerCase().includes(logSearch.toLowerCase()) ||
-        (log.device && log.device.toLowerCase().includes(logSearch.toLowerCase()));
+        log.student_name.toLowerCase().includes(q) ||
+        log.email.toLowerCase().includes(q) ||
+        log.usn.toLowerCase().includes(q) ||
+        (log.device && log.device.toLowerCase().includes(q)) ||
+        (log.reason && log.reason.toLowerCase().includes(q));
 
-      const matchesStatus =
-        logFilter === 'ALL' ||
-        (logFilter === 'SUCCESS' && log.status === 'SUCCESS') ||
-        (logFilter === 'DENIED' && (log.status === 'DENIED' || log.status === 'BLOCKED'));
-
-      return matchesSearch && matchesStatus;
+      return matchesSearch;
     });
-  }, [logs, logSearch, logFilter]);
+  }, [logs, logSearch, logStatusFilter]);
 
   // Filtered Change Requests
   const filteredRequests = useMemo(() => {
@@ -109,7 +123,7 @@ export const AdminPortalPage: React.FC = () => {
     });
   }, [requests, requestFilter]);
 
-  // Refresh All Data from Google Sheet and Local Storage
+  // Refresh All Data directly from Google Sheet (without storing logs in localStorage)
   const refreshData = async () => {
     try {
       const live = await adminSheetService.fetchLiveFromSheet();
@@ -117,16 +131,17 @@ export const AdminPortalPage: React.FC = () => {
         setLogs(live.logs);
         setRequests(live.requests);
         setSettings(live.settings);
+        setStats(adminSheetService.getAdminStats(live.logs));
       } else {
         setLogs(adminSheetService.getLogs());
         setRequests(adminSheetService.getChangeRequests());
         setSettings(adminSheetService.getPortalSettings());
+        setStats(adminSheetService.getAdminStats());
       }
     } catch {
       setLogs(adminSheetService.getLogs());
       setRequests(adminSheetService.getChangeRequests());
       setSettings(adminSheetService.getPortalSettings());
-    } finally {
       setStats(adminSheetService.getAdminStats());
     }
   };
@@ -236,17 +251,45 @@ export const AdminPortalPage: React.FC = () => {
 
   // Handle Lock / Unlock Portal
   const handleToggleLock = async () => {
-    const nextLocked = !settings.is_locked;
-    const updated = await adminSheetService.setPortalLock(nextLocked, lockReasonInput);
-    setSettings(updated);
-    setStats(adminSheetService.getAdminStats());
-    setShowLockConfirmModal(false);
+    setIsUpdatingLock(true);
+    try {
+      const nextLocked = !settings.is_locked;
+      const updated = await adminSheetService.setPortalLock(nextLocked, lockReasonInput);
+      setSettings(updated);
+      setStats(adminSheetService.getAdminStats());
+      setShowLockConfirmModal(false);
+    } finally {
+      setIsUpdatingLock(false);
+    }
   };
 
   // Handle Request Status Update
   const handleRequestAction = async (id: string, status: 'APPROVED' | 'REJECTED') => {
     await adminSheetService.updateChangeRequestStatus(id, status);
     refreshData();
+  };
+
+  // Manual Live Refresh from Google Sheet
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshData();
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 400);
+    }
+  };
+
+  // Export CSV of currently filtered logs
+  const handleExportCSV = () => {
+    const csv = adminSheetService.exportLogsCSV(filteredLogs);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `student_portal_logins_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
 
@@ -474,10 +517,10 @@ function doPost(e) {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Total Logins
+                  Total Login Audits
                 </span>
                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                  <Sparkles className="w-3 h-3" /> Live Active
+                  <Sparkles className="w-3 h-3" /> Live Sheet Sync
                 </span>
               </div>
 
@@ -486,7 +529,7 @@ function doPost(e) {
                   {stats.total_logins}
                 </span>
                 <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                  across all student sessions
+                  recorded attempts
                 </span>
               </div>
             </div>
@@ -497,11 +540,11 @@ function doPost(e) {
                 <span className="font-bold text-slate-800 dark:text-slate-200">{stats.today_logins}</span>
               </div>
               <div>
-                <span className="block text-[10px] text-emerald-500">Allowed</span>
+                <span className="block text-[10px] text-emerald-500 font-medium">Successful</span>
                 <span className="font-bold text-emerald-600 dark:text-emerald-400">{stats.successful_logins}</span>
               </div>
               <div>
-                <span className="block text-[10px] text-rose-500">Blocked</span>
+                <span className="block text-[10px] text-rose-500 font-medium">Denied / Unknown</span>
                 <span className="font-bold text-rose-600 dark:text-rose-400">{stats.denied_logins}</span>
               </div>
             </div>
@@ -722,15 +765,38 @@ function doPost(e) {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3.5 border-b border-slate-200/80 dark:border-[#222228] mb-4">
               <div>
                 <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>Log history</span>
+                  <span>Live Login Audit History</span>
                   <span className="text-xs font-normal text-slate-400">({filteredLogs.length})</span>
                 </h2>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mt-0.5">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Direct sync with Google Sheet &bull; Real-time successful, denied & unknown login attempts</span>
+                </p>
               </div>
 
-
+              {/* Status Filter Tabs (ALL / SUCCESS / DENIED) */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-[#16161D] p-0.5 rounded-lg border border-slate-200 dark:border-[#262630]">
+                {(['ALL', 'SUCCESS', 'DENIED'] as const).map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => setLogStatusFilter(st)}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all cursor-pointer ${
+                      logStatusFilter === st
+                        ? 'bg-white dark:bg-[#22222C] text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {st === 'ALL'
+                      ? `All (${logs.length})`
+                      : st === 'SUCCESS'
+                      ? `Successful (${stats.successful_logins})`
+                      : `Denied (${stats.denied_logins})`}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Search & Filter Toolbar */}
+            {/* Search & Actions Toolbar */}
             <div className="flex flex-col sm:flex-row gap-2 mb-3">
               <div className="relative flex-1">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
@@ -738,25 +804,32 @@ function doPost(e) {
                   type="text"
                   value={logSearch}
                   onChange={(e) => setLogSearch(e.target.value)}
-                  placeholder="Search by student, email, USN, or device..."
+                  placeholder="Search by student, email, USN, reason, or device..."
                   className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 dark:border-[#262630] bg-slate-50/50 dark:bg-[#121217] text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#8048A8]"
                 />
               </div>
 
-              <div className="flex items-center gap-1 bg-slate-100 dark:bg-[#16161D] p-0.5 rounded-lg border border-slate-200 dark:border-[#262630]">
-                {(['ALL', 'SUCCESS', 'DENIED'] as const).map((flt) => (
-                  <button
-                    key={flt}
-                    onClick={() => setLogFilter(flt)}
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all ${
-                      logFilter === flt
-                        ? 'bg-white dark:bg-[#22222C] text-slate-900 dark:text-white shadow-xs'
-                        : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-                    }`}
-                  >
-                    {flt}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleManualRefresh}
+                  disabled={isRefreshing}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-[#2A2A34] bg-white dark:bg-[#16161D] hover:bg-slate-50 dark:hover:bg-[#1E1E26] text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60"
+                  title="Sync live logs directly from Google Sheet"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-[#8048A8] dark:text-[#D1A7FF] ${isRefreshing ? 'animate-spin' : ''}`} />
+                  <span>{isRefreshing ? 'Syncing...' : 'Sync Live'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleExportCSV}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-[#2A2A34] bg-white dark:bg-[#16161D] hover:bg-slate-50 dark:hover:bg-[#1E1E26] text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Download logs as CSV"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                  <span>CSV</span>
+                </button>
               </div>
             </div>
 
@@ -765,7 +838,7 @@ function doPost(e) {
               <table className="w-full text-left text-[11px]">
                 <thead className="bg-slate-100/80 dark:bg-[#14141B] text-slate-600 dark:text-slate-400 font-semibold sticky top-0 z-10 border-b border-slate-200 dark:border-[#222228]">
                   <tr>
-                    <th className="py-2.5 px-3">Student</th>
+                    <th className="py-2.5 px-3">Student / User</th>
                     <th className="py-2.5 px-3">Email</th>
                     <th className="py-2.5 px-3">Status</th>
                     <th className="py-2.5 px-3">Device / Method</th>
@@ -776,48 +849,77 @@ function doPost(e) {
                   {filteredLogs.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-10 text-center text-slate-400 text-xs">
-                        No log entries matched your filter.
+                        No login entries matched your filter.
                       </td>
                     </tr>
                   ) : (
-                    filteredLogs.map((log) => (
-                      <tr
-                        key={log.id}
-                        className="hover:bg-slate-50 dark:hover:bg-[#101016] transition-colors"
-                      >
-                        <td className="py-2.5 px-3">
-                          <span className="font-semibold text-slate-800 dark:text-slate-200 block truncate max-w-[130px]">
-                            {log.student_name}
-                          </span>
-                          <span className="font-mono text-[10px] text-slate-400">{log.usn}</span>
-                        </td>
-                        <td className="py-2.5 px-3 font-mono text-[10px] text-slate-600 dark:text-slate-300 truncate max-w-[150px]">
-                          {log.email}
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                              log.status === 'SUCCESS'
-                                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                                : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
-                            }`}
-                          >
-                            {log.status === 'SUCCESS' ? (
-                              <CheckCircle2 className="w-2.5 h-2.5" />
+                    filteredLogs.map((log) => {
+                      const isUnknown = log.student_name === 'Unknown User';
+                      const isBlocked = log.status === 'BLOCKED';
+
+                      return (
+                        <tr
+                          key={log.id}
+                          className="hover:bg-slate-50 dark:hover:bg-[#101016] transition-colors"
+                        >
+                          <td className="py-2.5 px-3">
+                            {isUnknown ? (
+                              <div>
+                                <span className="font-semibold text-rose-600 dark:text-rose-400 block truncate max-w-[130px]">
+                                  Unknown User
+                                </span>
+                                <span className="font-mono text-[9px] text-slate-400">Unauthorized</span>
+                              </div>
                             ) : (
-                              <XCircle className="w-2.5 h-2.5" />
+                              <div>
+                                <span className="font-semibold text-slate-800 dark:text-slate-200 block truncate max-w-[130px]">
+                                  {log.student_name}
+                                </span>
+                                <span className="font-mono text-[10px] text-slate-400">{log.usn}</span>
+                              </div>
                             )}
-                            {log.status}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-500 dark:text-slate-400 truncate max-w-[130px]">
-                          {log.device}
-                        </td>
-                        <td className="py-2.5 px-3 text-right text-[10px] text-slate-400 whitespace-nowrap">
-                          {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </td>
-                      </tr>
-                    ))
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[10px] text-slate-600 dark:text-slate-300 truncate max-w-[150px]">
+                            {log.email}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                log.status === 'SUCCESS'
+                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                                  : isBlocked
+                                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                              }`}
+                            >
+                              {log.status === 'SUCCESS' ? (
+                                <CheckCircle2 className="w-2.5 h-2.5" />
+                              ) : isBlocked ? (
+                                <Lock className="w-2.5 h-2.5" />
+                              ) : (
+                                <XCircle className="w-2.5 h-2.5" />
+                              )}
+                              {log.status}
+                            </span>
+                            {log.reason && (
+                              <span
+                                className="block text-[9px] text-slate-400 dark:text-slate-500 truncate max-w-[140px] mt-0.5"
+                                title={log.reason}
+                              >
+                                {log.reason}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-500 dark:text-slate-400 truncate max-w-[130px]">
+                            {log.device}
+                          </td>
+                          <td className="py-2.5 px-3 text-right text-[10px] text-slate-400 whitespace-nowrap">
+                            {new Date(log.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}{' '}
+                            {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -951,11 +1053,19 @@ function doPost(e) {
               </button>
               <button
                 onClick={handleToggleLock}
-                className={`px-4 py-2 rounded-xl text-xs font-bold text-white shadow-md ${
+                disabled={isUpdatingLock}
+                className={`px-4 py-2 rounded-xl text-xs font-bold text-white shadow-md flex items-center justify-center gap-1.5 transition-all disabled:opacity-60 ${
                   settings.is_locked ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
                 }`}
               >
-                {settings.is_locked ? 'Confirm Unlock' : 'Confirm Lock Portal'}
+                {isUpdatingLock ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Syncing...</span>
+                  </>
+                ) : (
+                  <span>{settings.is_locked ? 'Confirm Unlock' : 'Confirm Lock Portal'}</span>
+                )}
               </button>
             </div>
           </div>

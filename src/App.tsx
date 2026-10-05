@@ -17,11 +17,13 @@ import { BottomNav } from './components/layout/BottomNav';
 import { Footer } from './components/layout/Footer';
 import { AdminInspectionBanner } from './components/layout/AdminInspectionBanner';
 import { ScrollToTop } from './components/common/ScrollToTop';
+import { PortalLockedScreen } from './components/common/PortalLockedScreen';
+import { adminSheetService } from './services/adminSheetService';
 import { ROUTES } from './utils/constants';
 
 // Protected Route Guard
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isPortalLocked, lockReason } = useAuth();
 
   if (isLoading) {
     return (
@@ -35,12 +37,24 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
     return <Navigate to={ROUTES.LOGIN} replace />;
   }
 
+  const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+  const isAdmin = adminSheetService.isAdminAuthenticated();
+
+  // If portal is locked and user is not an administrator / inspecting, block access
+  if (isPortalLocked && !isInspecting && !isAdmin) {
+    return (
+      <PortalLockedScreen
+        reason={lockReason || 'System maintenance and grade synchronisation in progress.'}
+      />
+    );
+  }
+
   return <>{children}</>;
 };
 
 // Public Route Guard (prevents logged in users from seeing login again)
 const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isPortalLocked } = useAuth();
 
   if (isLoading) {
     return (
@@ -50,7 +64,10 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
-  if (isAuthenticated) {
+  const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+  const isAdmin = adminSheetService.isAdminAuthenticated();
+
+  if (isAuthenticated && (!isPortalLocked || isInspecting || isAdmin)) {
     return <Navigate to={ROUTES.DASHBOARD} replace />;
   }
 
