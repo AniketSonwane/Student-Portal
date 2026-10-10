@@ -15,7 +15,7 @@ A modern, high-performance academic portal and administrative dashboard built fo
 - **Record Correction Requests**: In-app correction submissions for personal details, marks, and attendance discrepancies.
 
 ### 🛡️ Institutional Control Center (Admin Portal)
-- **Exclusive Access**: Direct biometric-like Google Sign-In restricted to `2007aniketsonwane@gmail.com`.
+- **Exclusive Access**: Direct biometric-like Google Sign-In restricted to configured administrator accounts.
 - **Live Google Sheets Integration**: Real-time two-way synchronization via Google Apps Script Web App.
 - **Audit & Security Logging**: Instant capture of authentication attempts, IP/device signatures, timestamps, and status.
 - **Access Any Student**: Search and inspect any enrolled student profile with persistent top-level dashboard return navigation.
@@ -52,9 +52,8 @@ Student-Portal/
 │   ├── components/         # Common, layout, marks, and UI components
 │   ├── config/             # Semester & sheet configuration
 │   ├── context/            # AuthContext and ThemeContext
-│   ├── data/               # Roster & student fallback datasets
-│   ├── pages/              # Admin, Attendance, Dashboard, Login, Marks, Profile, Settings, Statement
-│   ├── services/           # Google Sheets API, Auth, Admin & Profile services
+│   ├── pages/              # Admin, Attendance, Dashboard, ExamDates, Login, Marks, Profile, Settings, Statement, Timetable
+│   ├── services/           # Google Sheets API, Auth, Admin, Profile, ExamDates & Timetable services
 │   ├── styles/             # Tailwind & theme CSS
 │   ├── types/              # TypeScript interfaces
 │   ├── utils/              # Clean storage & route constants
@@ -77,11 +76,11 @@ npm install
 ```
 
 ### 2. Configure Environment Variables
-Create a `.env` file in the project root:
-```env
-VITE_GOOGLE_CLIENT_ID=your_google_oauth_client_id
-VITE_ADMIN_SHEET_URL=your_google_apps_script_exec_url
+Copy `.env.example` to `.env` and fill in your institutional credentials:
+```bash
+cp .env.example .env
 ```
+Ensure `VITE_GOOGLE_CLIENT_ID`, Google Spreadsheet IDs, and `VITE_GOOGLE_SHEETS_ADMIN_API_URL` are provided.
 
 ### 3. Run Locally
 ```bash

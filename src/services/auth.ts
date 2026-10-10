@@ -1,7 +1,6 @@
 import { LoginResponse, Student } from '../types/auth';
 import { profileService } from './profile';
 import { adminSheetService } from './adminSheetService';
-import { AUTHORIZED_STUDENTS_ROSTER, AUTHORIZED_COLLEGE_EMAILS } from '../data/studentsRoster';
 
 const TOKEN_KEY = 'student_portal_token';
 const USER_KEY = 'student_portal_user';
@@ -51,17 +50,12 @@ export const authService = {
   },
 
   /**
-   * Check whether an email belongs to the 68 authorized college email IDs in the student directory.
+   * Check whether an email belongs to the authorized college domain
    */
   isAuthorizedCollegeEmail(email: string): boolean {
     const normalized = (email || '').trim().toLowerCase();
     if (!normalized) return false;
-    if (AUTHORIZED_COLLEGE_EMAILS.has(normalized)) return true;
-    // Handle the typo in row 47 of the sheet
-    if (normalized === 'shreyan.cse25@sbjit.edu.in' || normalized === 'shreyan.cse25@sbit.edu.in') {
-      return true;
-    }
-    return false;
+    return normalized.endsWith('@sbjit.edu.in') || normalized.endsWith('@sbit.edu.in');
   },
 
   /**
@@ -110,11 +104,11 @@ export const authService = {
       };
     }
 
-    // Check if user is the authorized administrator (2007aniketsonwane@gmail.com)
+    // Check if user is the authorized administrator
     if (adminSheetService.isAuthorizedAdminEmail(emailToVerify)) {
       adminSheetService.setAdminAuthenticated(true, {
         email: emailToVerify,
-        name: 'Administrator (Aniket Sonwane)',
+        name: 'Administrator',
         picture: googlePicture,
       });
 
@@ -150,10 +144,14 @@ export const authService = {
       };
     }
 
-    // Check if portal is locked by admin (fetch live settings)
-    const settings = await adminSheetService.fetchLiveSettings(true);
+    // Fetch live settings and student directory in parallel (fast)
+    const [settings, sheetRes] = await Promise.all([
+      adminSheetService.fetchLiveSettings(false),
+      profileService.fetchAllStudents(false),
+    ]);
+
     if (settings.is_locked && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
-      await adminSheetService.recordLog({
+      adminSheetService.recordLog({
         email: rawEmail,
         status: 'BLOCKED',
         reason: settings.lock_reason || 'Portal locked for maintenance',
@@ -167,41 +165,29 @@ export const authService = {
       };
     }
 
-    // Fetch live roster directly from Google Sheet (with fallback to 68 authorized students)
-    let roster: Student[] = AUTHORIZED_STUDENTS_ROSTER;
-    try {
-      const sheetRes = await profileService.fetchAllStudents(true);
-      if (sheetRes.success && sheetRes.data && sheetRes.data.length > 0) {
-        roster = sheetRes.data;
-      }
-    } catch {
-      roster = AUTHORIZED_STUDENTS_ROSTER;
-    }
+    // Match student from live/cached roster
+    const roster: Student[] =
+      sheetRes.success && sheetRes.data && sheetRes.data.length > 0
+        ? sheetRes.data
+        : profileService.getAllLocal();
 
     // Strict match against live student details from Google Sheet
+    const normRaw = rawEmail.replace('@sbit.', '@sbjit.');
     const student = roster.find((s) => {
-      const colEmail = (s.college_email || '').trim().toLowerCase();
+      const colEmail = (s.college_email || '').trim().toLowerCase().replace('@sbit.', '@sbjit.');
       const persEmail = (s.personal_email || '').trim().toLowerCase();
-      const googEmail = (s.google_email || '').trim().toLowerCase();
+      const googEmail = (s.google_email || '').trim().toLowerCase().replace('@sbit.', '@sbjit.');
 
       // Check college email ID, google email ID, and personal email ID from sheet
-      if (colEmail && colEmail !== 'na' && colEmail === rawEmail) return true;
-      if (googEmail && googEmail !== 'na' && googEmail === rawEmail) return true;
+      if (colEmail && colEmail !== 'na' && colEmail === normRaw) return true;
+      if (googEmail && googEmail !== 'na' && googEmail === normRaw) return true;
       if (persEmail && persEmail !== 'na' && persEmail === rawEmail) return true;
-
-      // Handle the minor typo in sheet row 47 (sbit.edu.in vs sbjit.edu.in)
-      if (
-        s.usn === 'CS25176' &&
-        (rawEmail === 'shreyan.cse25@sbjit.edu.in' || rawEmail === 'shreyan.cse25@sbit.edu.in')
-      ) {
-        return true;
-      }
 
       return false;
     });
 
     if (!student) {
-      await adminSheetService.recordLog({
+      adminSheetService.recordLog({
         email: rawEmail,
         student_name: 'Unknown User',
         usn: 'N/A',
@@ -218,8 +204,8 @@ export const authService = {
       };
     }
 
-    // Record successful login audit
-    await adminSheetService.recordLog({
+    // Record successful login audit in background (non-blocking)
+    adminSheetService.recordLog({
       email: student.college_email || rawEmail,
       student_name: student.name,
       usn: student.usn,
@@ -255,19 +241,13 @@ export const authService = {
       };
     }
 
-    const roster = profileService.getAllLocal() || AUTHORIZED_STUDENTS_ROSTER;
+    const roster = profileService.getAllLocal();
+    const normRaw = rawEmail.replace('@sbit.', '@sbjit.');
 
     const student = roster.find((s) => {
-      const colEmail = (s.college_email || '').trim().toLowerCase();
+      const colEmail = (s.college_email || '').trim().toLowerCase().replace('@sbit.', '@sbjit.');
       if (!colEmail || colEmail === 'na') return false;
-      if (colEmail === rawEmail) return true;
-      if (
-        s.usn === 'CS25176' &&
-        (rawEmail === 'shreyan.cse25@sbjit.edu.in' || rawEmail === 'shreyan.cse25@sbit.edu.in')
-      ) {
-        return true;
-      }
-      return false;
+      return colEmail === normRaw;
     });
 
     if (!student) {

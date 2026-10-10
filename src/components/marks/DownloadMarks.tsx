@@ -40,7 +40,14 @@ export const StatementModal: React.FC<StatementModalProps> = ({
             <div className="text-center pb-3.5 sm:pb-5 border-b border-slate-200 dark:border-[#22222A]">
               <div className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-xs font-semibold bg-slate-100 dark:bg-[#16161D] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#272732] mb-2 sm:mb-3">
                 <Calendar className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#8048A8] dark:text-[#D1A7FF]" />
-                <span>Academic Session 2025–2026 • Semester {marks.semester}</span>
+                <span>
+                  Academic Session {(() => {
+                    const y = new Date().getFullYear();
+                    const m = new Date().getMonth() + 1;
+                    const startYear = m >= 6 ? y : y - 1;
+                    return `${startYear}–${startYear + 1}`;
+                  })()} • Semester {marks.semester}
+                </span>
               </div>
               <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white uppercase leading-snug">
                 Student Academic Grade Statement

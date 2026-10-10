@@ -10,6 +10,7 @@ import {
   BookOpen,
   Settings,
   CalendarCheck,
+  CalendarDays,
   Shield,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
@@ -75,7 +76,7 @@ export const DashboardPage: React.FC = () => {
     };
   }, [user?.usn, user?.cgpa]);
 
-  const [attendance, setAttendance] = useState<string>('88%');
+  const [attendance, setAttendance] = useState<string>('—');
 
   useEffect(() => {
     let isCancelled = false;
@@ -115,11 +116,11 @@ export const DashboardPage: React.FC = () => {
           }
         }
         if (!isCancelled) {
-          setAttendance(calculatedPct !== null ? `${calculatedPct}%` : '88%');
+          setAttendance(calculatedPct !== null ? `${calculatedPct}%` : '—');
         }
       } catch {
         if (!isCancelled) {
-          setAttendance('88%');
+          setAttendance('—');
         }
       }
     };
@@ -286,7 +287,7 @@ export const DashboardPage: React.FC = () => {
           <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3 sm:mb-4">
             Portal Sections
           </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
             <div
               onClick={() => navigate(ROUTES.PROFILE)}
               className="p-3.5 sm:p-4 rounded-xl border border-slate-200 dark:border-[#222228] bg-white/90 dark:bg-[#0C0C10] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
@@ -320,6 +321,28 @@ export const DashboardPage: React.FC = () => {
               </div>
               <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-[#F59E51] transition-colors">Attendance</span>
               <span className="text-[11px] text-slate-500 dark:text-slate-400">Class summaries</span>
+            </div>
+
+            <div
+              onClick={() => navigate(ROUTES.TIMETABLE)}
+              className="p-3.5 sm:p-4 rounded-xl border border-slate-200 dark:border-[#222228] bg-white/90 dark:bg-[#0C0C10] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+            >
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-[#8048A8] group-hover:bg-[#8048A8]/10 group-hover:scale-110">
+                <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-[#8048A8] dark:text-[#D1A7FF] transition-colors" />
+              </div>
+              <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-[#8048A8] dark:group-hover:text-[#D1A7FF] transition-colors">Timetable</span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">Weekly schedule</span>
+            </div>
+
+            <div
+              onClick={() => navigate(ROUTES.EXAM_DATES)}
+              className="p-3.5 sm:p-4 rounded-xl border border-slate-200 dark:border-[#222228] bg-white/90 dark:bg-[#0C0C10] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+            >
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-[#8048A8] group-hover:bg-[#8048A8]/10 group-hover:scale-110">
+                <CalendarDays className="w-4 h-4 sm:w-5 sm:h-5 text-[#8048A8] dark:text-[#D1A7FF] transition-colors" />
+              </div>
+              <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-[#8048A8] dark:group-hover:text-[#D1A7FF] transition-colors">Exam Dates</span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">Timetable & schedules</span>
             </div>
 
             <div

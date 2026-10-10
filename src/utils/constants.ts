@@ -1,10 +1,11 @@
+const defaultAdminEmail = (import.meta.env.VITE_ADMIN_EMAIL as string) || '';
+
 export const APP_CONFIG = {
   name: 'Student Portal',
   subtitle: 'Academic Records & Performance',
   version: '1.0.0',
-  adminEmail: 'anixss.main@gmail.com',
-  adminContactUrl: 'mailto:anixss.main@gmail.com',
-  spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/167hosqqnr-PlwTZeU2dG3K1XUCBfZgNqD_mwG5oUDdI/edit?usp=sharing',
+  adminEmail: defaultAdminEmail,
+  adminContactUrl: `mailto:${defaultAdminEmail}`,
 };
 
 export const ROUTES = {
@@ -14,6 +15,8 @@ export const ROUTES = {
   MARKS: '/marks',
   STATEMENT: '/statement',
   ATTENDANCE: '/attendance',
+  EXAM_DATES: '/exam-dates',
+  TIMETABLE: '/timetable',
   SETTINGS: '/settings',
   TERMS: '/terms',
   ADMIN: '/admin',

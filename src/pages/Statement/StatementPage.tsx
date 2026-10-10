@@ -28,7 +28,7 @@ export const StatementPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const targetUsn = (queryUsn || user?.usn || 'CS25131').trim().toUpperCase();
+  const targetUsn = (queryUsn || user?.usn || '').trim().toUpperCase();
 
   useEffect(() => {
     loadStatement(targetUsn, querySem);

@@ -2,7 +2,8 @@ import { StudentAttendanceRecord, SubjectAttendance } from '../types/attendance'
 import { parseCSV } from './sheetParser';
 import { STUDENT_MDM_ALLOCATIONS, STUDENT_OE_ALLOCATIONS } from '../config/electiveAllocations';
 
-const ATTENDANCE_SPREADSHEET_ID = '1M550WSsFjWpiYFxqIIDP0GQJk4G8XGzjyuHIng0rryg';
+const ATTENDANCE_SPREADSHEET_ID =
+  (import.meta.env.VITE_GOOGLE_SHEETS_ATTENDANCE_ID as string) || '';
 
 // In-memory cache for attendance records per semester
 const attendanceCache = new Map<number, StudentAttendanceRecord[]>();
@@ -343,18 +344,31 @@ export const attendanceService = {
       };
     }
 
-    // Check cache
+    // 1. Check in-memory cache
     if (attendanceCache.has(semester)) {
       return { success: true, data: attendanceCache.get(semester)! };
     }
 
+    // 2. Check session storage cache
+    const sessionKey = `student_portal_attendance_sem_${semester}`;
+    try {
+      const stored = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(sessionKey) : null;
+      if (stored) {
+        const parsedStored: StudentAttendanceRecord[] = JSON.parse(stored);
+        if (parsedStored && parsedStored.length > 0) {
+          attendanceCache.set(semester, parsedStored);
+          return { success: true, data: parsedStored };
+        }
+      }
+    } catch {}
+
     const endpoints = [
-      `/api/sheets-proxy/spreadsheets/d/${ATTENDANCE_SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Sheet1`,
       `https://docs.google.com/spreadsheets/d/${ATTENDANCE_SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Sheet1`,
       `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(
         ATTENDANCE_SPREADSHEET_ID
       )}&sheet=Sheet1`,
       `https://docs.google.com/spreadsheets/d/${ATTENDANCE_SPREADSHEET_ID}/export?format=csv`,
+      `/api/sheets-proxy/spreadsheets/d/${ATTENDANCE_SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Sheet1`,
     ];
 
     let csvText: string | null = null;
@@ -402,6 +416,9 @@ export const attendanceService = {
       }
 
       attendanceCache.set(semester, records);
+      try {
+        sessionStorage.setItem(sessionKey, JSON.stringify(records));
+      } catch {}
       return { success: true, data: records };
     } catch (parseErr: any) {
       return {

@@ -188,7 +188,7 @@ export const SettingsPage: React.FC = () => {
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 dark:text-slate-400 font-mono truncate">
-                      {user?.usn || 'CS25131'} • {user?.google_email}
+                      {user?.usn || '—'} • {user?.google_email}
                     </p>
                   </div>
                 </div>

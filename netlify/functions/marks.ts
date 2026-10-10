@@ -17,7 +17,19 @@ export const handler: Handler = async (event) => {
       event.queryStringParameters?.spreadsheetId ||
       event.queryStringParameters?.sheetId ||
       process.env.GOOGLE_SHEETS_ID ||
-      '167hosqqnr-PlwTZeU2dG3K1XUCBfZgNqD_mwG5oUDdI';
+      process.env.VITE_GOOGLE_SHEETS_SEM1_ID ||
+      '';
+
+    if (!spreadsheetId) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: 'Spreadsheet ID is required.',
+        }),
+      };
+    }
 
     const sheetName = event.queryStringParameters?.sheet || 'Master-Sheet';
 

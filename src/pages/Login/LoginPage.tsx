@@ -6,12 +6,12 @@ import {
   Mail,
   ArrowRight,
   Lock,
-  Shield,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { ThemeToggle } from '../../components/common/ThemeToggle';
 import { APP_CONFIG, ROUTES } from '../../utils/constants';
 import { adminSheetService } from '../../services/adminSheetService';
+import { profileService } from '../../services/profile';
 
 const decodeGoogleJwt = (token: string): { email?: string; name?: string; picture?: string } | null => {
   try {
@@ -37,16 +37,15 @@ export const LoginPage: React.FC = () => {
   const gsiButtonRef = useRef<HTMLDivElement>(null);
   const [hasGsiButton, setHasGsiButton] = useState(false);
 
-  // Sync live lock status on mount
+  // Preload lock status and warm up student directory in background on mount
   useEffect(() => {
-    checkPortalLock(true);
+    checkPortalLock(false);
+    profileService.fetchAllStudents(false);
   }, []);
 
   // Initialize Google Identity Services if client ID is configured
   useEffect(() => {
-    const clientId =
-      import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-      '111999142134-d0g34vjirc6n60tvuv1avb0rm6j014a1.apps.googleusercontent.com';
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
     if (!clientId || clientId.includes('your_google_client_id')) return;
 
     const initGoogleAuth = () => {
@@ -58,12 +57,12 @@ export const LoginPage: React.FC = () => {
               if (response.credential) {
                 setSubmitting(true);
 
-                // Direct check: if 2007aniketsonwane@gmail.com signs in, open admin dashboard directly
+                // Direct check: if authorized administrator signs in, open admin dashboard directly
                 const decoded = decodeGoogleJwt(response.credential);
                 if (decoded?.email && adminSheetService.isAuthorizedAdminEmail(decoded.email)) {
                   adminSheetService.setAdminAuthenticated(true, {
                     email: decoded.email,
-                    name: decoded.name || 'Administrator (Aniket Sonwane)',
+                    name: decoded.name || 'Administrator',
                     picture: decoded.picture,
                   });
 
@@ -122,9 +121,7 @@ export const LoginPage: React.FC = () => {
 
   const handleGoogleSignInClick = () => {
     clearError();
-    const clientId =
-      import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-      '111999142134-d0g34vjirc6n60tvuv1avb0rm6j014a1.apps.googleusercontent.com';
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
     if (clientId && !clientId.includes('your_google_client_id') && window.google?.accounts?.id) {
       try {
@@ -154,13 +151,6 @@ export const LoginPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-          <Link
-            to={ROUTES.ADMIN}
-            className="text-[11px] font-semibold text-slate-600 hover:text-[#8048A8] dark:text-slate-300 dark:hover:text-[#D1A7FF] transition-colors flex items-center gap-1 px-2.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-[#1C1C24]"
-          >
-            <Shield className="w-3.5 h-3.5 text-[#8048A8] dark:text-[#D1A7FF]" />
-            <span>Admin Portal</span>
-          </Link>
           <ThemeToggle />
         </div>
       </header>
@@ -214,54 +204,32 @@ export const LoginPage: React.FC = () => {
             )}
 
             {/* Error Notification */}
-            {error && (
+            {error && !error.toLowerCase().includes('session') && (
               <div
                 className={`mb-5 p-3.5 sm:p-4 rounded-xl border text-xs transition-all animate-shake ${
-                  error.toLowerCase().includes('session')
-                    ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/60 text-amber-900 dark:text-amber-200'
-                    : error.toLowerCase().includes('lock') || error.toLowerCase().includes('maintenance')
+                  error.toLowerCase().includes('lock') || error.toLowerCase().includes('maintenance')
                     ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-900/60 text-rose-900 dark:text-rose-200'
                     : 'bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-200'
                 }`}
                 role="alert"
               >
                 <div className="flex items-start gap-2.5">
-                  <ShieldAlert
-                    className={`w-4 h-4 flex-shrink-0 mt-0.5 ${
-                      error.toLowerCase().includes('session')
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-rose-600 dark:text-rose-400'
-                    }`}
-                  />
+                  <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
                   <div className="flex-1 min-w-0">
-                    <p
-                      className={`font-semibold mb-1 ${
-                        error.toLowerCase().includes('session')
-                          ? 'text-amber-950 dark:text-amber-100'
-                          : 'text-rose-900 dark:text-rose-100'
-                      }`}
-                    >
-                      {error.toLowerCase().includes('session')
-                        ? 'Session Expired'
-                        : error.toLowerCase().includes('lock') || error.toLowerCase().includes('maintenance')
+                    <p className="font-semibold mb-1 text-rose-900 dark:text-rose-100">
+                      {error.toLowerCase().includes('lock') || error.toLowerCase().includes('maintenance')
                         ? 'Portal Locked'
                         : 'Access Denied'}
                     </p>
                     <p className="leading-relaxed text-slate-700 dark:text-slate-300 break-words">{error}</p>
                     <div className="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-zinc-800/60 flex items-center justify-between gap-2">
-                      {!error.toLowerCase().includes('session') ? (
-                        <a
-                          href={APP_CONFIG.adminContactUrl}
-                          className="inline-flex items-center gap-1 font-semibold text-[#8048A8] dark:text-[#D1A7FF] hover:underline truncate text-[11px]"
-                        >
-                          <Mail className="w-3 h-3 flex-shrink-0" />
-                          <span>Contact Admin</span>
-                        </a>
-                      ) : (
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                          30-minute auto timeout
-                        </span>
-                      )}
+                      <a
+                        href={APP_CONFIG.adminContactUrl}
+                        className="inline-flex items-center gap-1 font-semibold text-[#8048A8] dark:text-[#D1A7FF] hover:underline truncate text-[11px]"
+                      >
+                        <Mail className="w-3 h-3 flex-shrink-0" />
+                        <span>Contact Admin</span>
+                      </a>
                       <button
                         onClick={clearError}
                         className="text-slate-500 dark:text-slate-400 hover:text-slate-700 underline text-[11px] flex-shrink-0"

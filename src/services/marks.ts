@@ -28,6 +28,19 @@ export const marksService = {
       return { success: true, data: semesterCache.get(semester)! };
     }
 
+    // 2. Check session storage cache
+    const sessionKey = `student_portal_marks_sem_${semester}`;
+    try {
+      const stored = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(sessionKey) : null;
+      if (stored) {
+        const parsedStored: StudentSemesterMarks[] = JSON.parse(stored);
+        if (parsedStored && parsedStored.length > 0) {
+          semesterCache.set(semester, parsedStored);
+          return { success: true, data: parsedStored };
+        }
+      }
+    } catch {}
+
     const config = SEMESTER_SHEETS_CONFIG[semester];
     if (!config || !config.spreadsheetId) {
       return {
@@ -39,11 +52,11 @@ export const marksService = {
     const sheetName = config.sheetName || 'Master-Sheet';
     const spreadsheetId = config.spreadsheetId;
 
-    // Try endpoints in order: Vite Dev Proxy -> Direct -> Netlify Function
+    // Direct Google Sheets first for instant retrieval, then Netlify fallback
     const endpoints = [
-      `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
       `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
       `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(sheetName)}`,
+      `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
     ];
 
     let csvText: string | null = null;
@@ -83,20 +96,22 @@ export const marksService = {
 
       for (const dSheetName of detailsSheetCandidates) {
         const detailsEndpoints = [
-          `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
           `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
           `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(dSheetName)}`,
         ];
         if (semester === 3) {
+          const sem3DetailsGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_DETAILS_GID as string) || '2700910';
           detailsEndpoints.push(
-            `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=2700910`,
-            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=2700910`
+            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3DetailsGid)}`
           );
         }
         let found = false;
         for (const dUrl of detailsEndpoints) {
           try {
-            const dRes = await fetch(dUrl);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            const dRes = await fetch(dUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
             if (dRes.ok) {
               const dText = await dRes.text();
               if (dText && dText.length > 30 && !dText.includes('<!DOCTYPE html>')) {
@@ -116,16 +131,18 @@ export const marksService = {
     // When semester is 3, also fetch live NPTEL tab for dedicated marks & grades
     let nptelMap: Map<string, { marks?: string; grade?: string }> | undefined = undefined;
     if (semester === 3) {
+      const sem3NptelGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_NPTEL_GID as string) || '1657515727';
       const nptelEndpoints = [
-        `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
         `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
         `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=NPTEL`,
-        `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=1657515727`,
-        `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=1657515727`,
+        `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3NptelGid)}`,
       ];
       for (const nUrl of nptelEndpoints) {
         try {
-          const nRes = await fetch(nUrl);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          const nRes = await fetch(nUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
           if (nRes.ok) {
             const nText = await nRes.text();
             if (nText && nText.length > 30 && !nText.includes('<!DOCTYPE html>')) {
@@ -149,6 +166,9 @@ export const marksService = {
       }
 
       semesterCache.set(semester, parsed);
+      try {
+        sessionStorage.setItem(sessionKey, JSON.stringify(parsed));
+      } catch {}
       return { success: true, data: parsed };
     } catch (parseErr: any) {
       return {

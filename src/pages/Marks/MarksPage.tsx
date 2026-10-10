@@ -32,7 +32,7 @@ export const MarksPage: React.FC = () => {
   const initialSem = !isNaN(paramSem) && paramSem > 0 ? paramSem : currentSem;
 
   const [selectedSemester, setSelectedSemester] = useState<number>(initialSem);
-  const selectedUsn = user?.usn || 'CS25131';
+  const selectedUsn = user?.usn || '';
   const [availableSemesters, setAvailableSemesters] = useState<number[]>([1, 2, 3]);
   const [marks, setMarks] = useState<StudentSemesterMarks | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -361,6 +361,7 @@ export const MarksPage: React.FC = () => {
         <SemesterSelector
           currentSemester={selectedSemester}
           availableSemesters={availableSemesters}
+          badgeText={marks?.subjects ? `${marks.subjects.length} Total Courses` : undefined}
           onSelectSemester={(sem) => {
             setSelectedSemester(sem);
             setActiveSubjectCode(null);

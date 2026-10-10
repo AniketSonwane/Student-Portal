@@ -126,7 +126,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             token: null,
             isAuthenticated: false,
             isLoading: false,
-            error: 'Your session expired after 30 minutes. Please sign in again.',
+            error: null,
           });
         }
       } else {
@@ -215,7 +215,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!state.isAuthenticated) return;
 
     if (authService.isSessionExpired()) {
-      logout('Your session expired after 30 minutes. Please sign in again.');
+      logout();
       return;
     }
 
@@ -223,13 +223,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Trigger logout when 30 minutes expire
     const timer = setTimeout(() => {
-      logout('Your session expired after 30 minutes. Please sign in again.');
+      logout();
     }, remainingTime);
 
     // Periodic check (every 10s) in case setTimeout was throttled/paused (e.g., laptop sleep/hibernation)
     const interval = setInterval(() => {
       if (authService.isSessionExpired()) {
-        logout('Your session expired after 30 minutes. Please sign in again.');
+        logout();
       } else {
         checkPortalLock(false);
       }
@@ -239,7 +239,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
         if (authService.isSessionExpired()) {
-          logout('Your session expired after 30 minutes. Please sign in again.');
+          logout();
         } else {
           checkPortalLock(true);
         }

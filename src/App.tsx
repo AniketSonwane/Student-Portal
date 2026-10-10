@@ -8,6 +8,8 @@ import { MarksPage } from './pages/Marks/MarksPage';
 import { StatementPage } from './pages/Statement/StatementPage';
 import { ProfilePage } from './pages/Profile/ProfilePage';
 import { AttendancePage } from './pages/Attendance/AttendancePage';
+import { ExamDatesPage } from './pages/ExamDates/ExamDatesPage';
+import { TimetablePage } from './pages/Timetable/TimetablePage';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 import { TermsPage } from './pages/Terms/TermsPage';
 import { AdminPortalPage } from './pages/Admin/AdminPortalPage';
@@ -134,6 +136,22 @@ export const App: React.FC = () => {
                   element={
                     <ProtectedRoute>
                       <AttendancePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path={ROUTES.EXAM_DATES}
+                  element={
+                    <ProtectedRoute>
+                      <ExamDatesPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path={ROUTES.TIMETABLE}
+                  element={
+                    <ProtectedRoute>
+                      <TimetablePage />
                     </ProtectedRoute>
                   }
                 />

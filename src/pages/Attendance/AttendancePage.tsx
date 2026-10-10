@@ -27,7 +27,7 @@ export const AttendancePage: React.FC = () => {
 
   // Default to Semester 3 where active attendance is published
   const [selectedSemester, setSelectedSemester] = useState<number>(3);
-  const selectedUsn = user?.usn || 'CS25131';
+  const selectedUsn = user?.usn || '';
 
   const [record, setRecord] = useState<StudentAttendanceRecord | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -298,6 +298,7 @@ export const AttendancePage: React.FC = () => {
         <SemesterSelector
           currentSemester={selectedSemester}
           availableSemesters={[1, 2, 3]}
+          badgeText={record?.subjects ? `${record.subjects.length} Total Subjects` : 'Lecture Records'}
           onSelectSemester={(sem) => setSelectedSemester(sem)}
         />
 

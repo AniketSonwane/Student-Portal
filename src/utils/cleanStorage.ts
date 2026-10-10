@@ -17,14 +17,17 @@ export const cleanupUnnecessaryStorage = (): void => {
         keysToRemove.push(key);
       }
 
-      // 2. Remove obsolete demo, test, or scratch keys from development
+      // 2. Remove obsolete demo, test, or scratch keys from development, and purge timetable and exam caches
       if (
         key.startsWith('test_') ||
         key.startsWith('demo_') ||
         key.startsWith('temp_') ||
         key === 'student_portal_demo_data' ||
         key === 'student_portal_mock_logs' ||
-        key === 'student_portal_cached_students'
+        key === 'student_portal_cached_students' ||
+        key.includes('timetable') ||
+        key.includes('exam_date') ||
+        key.includes('custom_exam')
       ) {
         keysToRemove.push(key);
       }
@@ -33,12 +36,28 @@ export const cleanupUnnecessaryStorage = (): void => {
     // Purge matched unnecessary keys
     keysToRemove.forEach((k) => localStorage.removeItem(k));
 
-    // 3. Purge obsolete or broken Google Apps Script URLs
+    // Also purge timetable and exam cache from sessionStorage
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        const sessionKeys: string[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const sKey = sessionStorage.key(i);
+          if (
+            sKey &&
+            (sKey.includes('timetable') ||
+              sKey.includes('exam_date') ||
+              sKey.includes('custom_exam'))
+          ) {
+            sessionKeys.push(sKey);
+          }
+        }
+        sessionKeys.forEach((k) => sessionStorage.removeItem(k));
+      } catch {}
+    }
+
+    // 3. Purge obsolete or mismatched Google Apps Script URLs
     const sheetUrl = localStorage.getItem('student_portal_admin_sheet_url');
-    if (
-      sheetUrl &&
-      (sheetUrl.includes('AKfycbxvk') || !sheetUrl.startsWith('https://script.google.com'))
-    ) {
+    if (sheetUrl && !sheetUrl.startsWith('https://script.google.com')) {
       localStorage.removeItem('student_portal_admin_sheet_url');
     }
 

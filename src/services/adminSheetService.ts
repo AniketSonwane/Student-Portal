@@ -1,6 +1,7 @@
 import { LoginLog, ChangeRequest, PortalSettings, AdminStats } from '../types/admin';
-import { AUTHORIZED_STUDENTS_ROSTER } from '../data/studentsRoster';
+import { profileService } from './profile';
 import { cleanupUnnecessaryStorage } from '../utils/cleanStorage';
+import { TIMETABLE_SPREADSHEET_ID, EXAM_DATES_SPREADSHEET_ID } from '../config/sheetsConfig';
 
 const STORAGE_KEYS = {
   LOGS: 'student_portal_admin_logs',
@@ -13,16 +14,44 @@ const STORAGE_KEYS = {
 
 export const adminSheetService = {
   /**
-   * Get configured Google Apps Script Web App URL (or environment variable)
+   * Get configured Google Apps Script Web App URL for Dashboard Login & Audit Logging
    */
   getScriptUrl(): string {
     const envUrl =
       (import.meta.env.VITE_GOOGLE_SHEETS_ADMIN_API_URL as string) ||
-      'https://script.google.com/macros/s/AKfycbyv6WQLNP80abRPNASdB5oGcOZNGAbKw3fb5cx1MvGwsABM2NW2hhmnRR9Qw4iZCgml/exec';
+      (import.meta.env.VITE_ADMIN_SHEET_URL as string) ||
+      '';
     const stored = localStorage.getItem(STORAGE_KEYS.SHEET_URL);
-    // If stored contains the obsolete/broken AKfycbxvk URL, purge it immediately
-    if (stored && (stored.includes('AKfycbxvk') || !stored.startsWith('https://script.google.com'))) {
+    if (stored && !stored.startsWith('https://script.google.com')) {
       localStorage.removeItem(STORAGE_KEYS.SHEET_URL);
+      return envUrl;
+    }
+    return stored || envUrl;
+  },
+
+  /**
+   * Get configured Timetable Apps Script Web App URL
+   */
+  getTimetableScriptUrl(): string {
+    const envUrl =
+      (import.meta.env.VITE_GOOGLE_SHEETS_TIMETABLE_API_URL as string) || '';
+    const stored = localStorage.getItem('student_portal_timetable_sheet_url');
+    if (stored && !stored.startsWith('https://script.google.com')) {
+      localStorage.removeItem('student_portal_timetable_sheet_url');
+      return envUrl;
+    }
+    return stored || envUrl;
+  },
+
+  /**
+   * Get configured Exam Dates Apps Script Web App URL
+   */
+  getExamDatesScriptUrl(): string {
+    const envUrl =
+      (import.meta.env.VITE_GOOGLE_SHEETS_EXAM_DATES_API_URL as string) || '';
+    const stored = localStorage.getItem('student_portal_exam_dates_sheet_url');
+    if (stored && !stored.startsWith('https://script.google.com')) {
+      localStorage.removeItem('student_portal_exam_dates_sheet_url');
       return envUrl;
     }
     return stored || envUrl;
@@ -32,7 +61,7 @@ export const adminSheetService = {
    * Set Google Apps Script Web App URL
    */
   setScriptUrl(url: string) {
-    if (!url || !url.trim() || url.includes('AKfycbxvk')) {
+    if (!url || !url.trim() || !url.startsWith('https://script.google.com')) {
       localStorage.removeItem(STORAGE_KEYS.SHEET_URL);
     } else {
       localStorage.setItem(STORAGE_KEYS.SHEET_URL, url.trim());
@@ -75,17 +104,17 @@ export const adminSheetService = {
 
   /**
    * Check if an email is authorized to access the Admin Portal
-   * Specifically: 2007aniketsonwane@gmail.com
    */
   isAuthorizedAdminEmail(email: string): boolean {
     const raw = (email || '').toLowerCase().trim();
     if (!raw) return false;
-    const allowed = [
-      '2007aniketsonwane@gmail.com',
-      'anixss.main@gmail.com',
-    ];
+    const allowed: string[] = [];
     const envAdmin = (import.meta.env.VITE_ADMIN_EMAIL as string) || '';
     if (envAdmin) allowed.push(envAdmin.toLowerCase().trim());
+    const envAdminList = (import.meta.env.VITE_ADMIN_EMAILS as string) || '';
+    if (envAdminList) {
+      envAdminList.split(',').forEach((e) => allowed.push(e.trim().toLowerCase()));
+    }
     return allowed.includes(raw);
   },
 
@@ -278,22 +307,20 @@ export const adminSheetService = {
     // Keep localStorage free of login logs
     localStorage.removeItem(STORAGE_KEYS.LOGS);
 
-    // Directly sync log to Google Apps Script Web App
+    // Directly sync log to Google Apps Script Web App in the background (fire-and-forget)
     const scriptUrl = this.getScriptUrl();
     if (scriptUrl) {
-      try {
-        await fetch(scriptUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({
-            action: 'ADD_LOG',
-            log: newLog,
-          }),
-        });
-      } catch (err) {
+      fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'ADD_LOG',
+          log: newLog,
+        }),
+      }).catch((err) => {
         console.warn('Could not sync log to Google Sheet Web App:', err);
-      }
+      });
     }
 
     return newLog;
@@ -420,6 +447,123 @@ export const adminSheetService = {
     return true;
   },
 
+  /**
+   * Sync newly added exam date to Google Apps Script Web App
+   */
+  async addExamDateToSheet(exam: any): Promise<{ success: boolean; error?: string }> {
+    const scriptUrl = this.getExamDatesScriptUrl();
+    if (!scriptUrl) return { success: false, error: 'Google Apps Script Web App URL is not configured' };
+    const payload = {
+      action: 'ADD_EXAM_DATE',
+      spreadsheetId: EXAM_DATES_SPREADSHEET_ID,
+      exam,
+    };
+    try {
+      const res = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        return { success: json.success !== false, error: json.error };
+      }
+      return { success: true };
+    } catch (err: any) {
+      try {
+        await fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        });
+        return { success: true };
+      } catch (fallbackErr: any) {
+        console.warn('Could not sync exam date to Google Sheet:', fallbackErr);
+        return { success: false, error: fallbackErr.message };
+      }
+    }
+  },
+
+  /**
+   * Delete exam date from Google Apps Script Web App
+   */
+  async deleteExamDateFromSheet(id: string, exam?: any): Promise<{ success: boolean; error?: string }> {
+    const scriptUrl = this.getExamDatesScriptUrl();
+    if (!scriptUrl) return { success: false, error: 'Google Apps Script Web App URL is not configured' };
+    const payload = {
+      action: 'DELETE_EXAM_DATE',
+      spreadsheetId: EXAM_DATES_SPREADSHEET_ID,
+      examId: id,
+      subjectCode: exam?.subjectCode,
+      semester: exam?.semester,
+      date: exam?.date,
+    };
+    try {
+      const res = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        return { success: json.success !== false, error: json.error };
+      }
+      return { success: true };
+    } catch {
+      try {
+        await fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        });
+        return { success: true };
+      } catch (fallbackErr: any) {
+        return { success: false, error: fallbackErr.message };
+      }
+    }
+  },
+
+  /**
+   * Sync updated timetable schedule to Google Apps Script Web App
+   */
+  async saveTimetableToSheet(semester: number, schedule: any[]): Promise<{ success: boolean; error?: string }> {
+    const scriptUrl = this.getTimetableScriptUrl();
+    if (!scriptUrl) return { success: false, error: 'Google Apps Script Web App URL is not configured' };
+    const payload = {
+      action: 'SAVE_TIMETABLE',
+      semester,
+      spreadsheetId: TIMETABLE_SPREADSHEET_ID,
+      schedule,
+    };
+    try {
+      const res = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        return { success: json.success !== false, error: json.error };
+      }
+      return { success: true };
+    } catch (err: any) {
+      try {
+        await fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        });
+        return { success: true };
+      } catch (fallbackErr: any) {
+        console.warn('Could not sync timetable to Google Sheet:', fallbackErr);
+        return { success: false, error: fallbackErr.message };
+      }
+    }
+  },
+
   _lastSettingsFetch: 0,
 
   /**
@@ -428,8 +572,8 @@ export const adminSheetService = {
   async fetchLiveSettings(forceRefresh = false): Promise<PortalSettings> {
     const cached = this.getPortalSettings();
     const now = Date.now();
-    // Cache for 15 seconds unless forced
-    if (!forceRefresh && this._lastSettingsFetch && now - this._lastSettingsFetch < 15000) {
+    // Cache for 60 seconds unless forced
+    if (!forceRefresh && this._lastSettingsFetch && now - this._lastSettingsFetch < 60000) {
       return cached;
     }
 
@@ -437,7 +581,10 @@ export const adminSheetService = {
     if (!scriptUrl) return cached;
 
     try {
-      const response = await fetch(scriptUrl);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const response = await fetch(scriptUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!response.ok) return cached;
       const json = await response.json();
       if (!json.success || !json.data || !json.data.settings) return cached;
@@ -473,11 +620,18 @@ export const adminSheetService = {
    */
   getPortalSettings(): PortalSettings {
     const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+    const envAdmin = (import.meta.env.VITE_ADMIN_EMAIL as string) || '';
+    const envAdminList = (import.meta.env.VITE_ADMIN_EMAILS as string) || '';
+    const configuredAdmins: string[] = [
+      ...(envAdmin ? [envAdmin.toLowerCase().trim()] : []),
+      ...(envAdminList ? envAdminList.split(',').map((e) => e.trim().toLowerCase()) : []),
+    ];
+
     if (!raw) {
       const defaultSettings: PortalSettings = {
         is_locked: false,
         lock_reason: 'System maintenance and grade synchronisation in progress.',
-        allowed_admin_emails: ['anixss.main@gmail.com'],
+        allowed_admin_emails: configuredAdmins,
       };
       localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(defaultSettings));
       return defaultSettings;
@@ -488,7 +642,7 @@ export const adminSheetService = {
       return {
         is_locked: false,
         lock_reason: 'System maintenance in progress.',
-        allowed_admin_emails: ['anixss.main@gmail.com'],
+        allowed_admin_emails: configuredAdmins,
       };
     }
   },
@@ -554,7 +708,7 @@ export const adminSheetService = {
       today_logins: todayLogs.length,
       successful_logins: successfulLogins,
       denied_logins: deniedLogins,
-      current_students_count: AUTHORIZED_STUDENTS_ROSTER.length,
+      current_students_count: profileService.getAllLocal().length,
       pending_change_requests: pendingRequests,
       is_portal_locked: settings.is_locked,
     };
