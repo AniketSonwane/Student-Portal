@@ -34,6 +34,7 @@ export const LoginPage: React.FC = () => {
   const { loginWithGoogle, isLoading, error, clearError, isPortalLocked, lockReason, checkPortalLock } = useAuth();
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
   const gsiButtonRef = useRef<HTMLDivElement>(null);
   const [hasGsiButton, setHasGsiButton] = useState(false);
 
@@ -56,6 +57,7 @@ export const LoginPage: React.FC = () => {
             callback: async (response: any) => {
               if (response.credential) {
                 setSubmitting(true);
+                setLocalError(null);
 
                 // Direct check: if authorized administrator signs in, open admin dashboard directly
                 const decoded = decodeGoogleJwt(response.credential);
@@ -121,19 +123,102 @@ export const LoginPage: React.FC = () => {
 
   const handleGoogleSignInClick = () => {
     clearError();
+    setLocalError(null);
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
-    if (clientId && !clientId.includes('your_google_client_id') && window.google?.accounts?.id) {
+    if (!clientId || clientId.includes('your_google_client_id')) {
+      setLocalError(
+        'Google Client ID is missing. In Netlify Site Settings > Environment variables, ensure VITE_GOOGLE_CLIENT_ID is set, then trigger "Clear cache and deploy site".'
+      );
+      return;
+    }
+
+    if (!window.google) {
+      setLocalError(
+        'Google Sign-In services could not load. Please check your internet connection or disable ad blockers and refresh.'
+      );
+      return;
+    }
+
+    // Primary: Open standard Google Sign-In popup using Google OAuth 2.0 Token Client
+    if (window.google?.accounts?.oauth2) {
       try {
-        window.google.accounts.id.prompt((notification: any) => {
-          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            console.log('Google One-tap prompt not displayed:', notification.getNotDisplayedReason?.());
-          }
+        setSubmitting(true);
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'email profile openid',
+          callback: async (tokenResponse: any) => {
+            if (tokenResponse.error) {
+              setSubmitting(false);
+              setLocalError(`Google Sign-In notice: ${tokenResponse.error_description || tokenResponse.error}`);
+              return;
+            }
+
+            if (tokenResponse.access_token) {
+              try {
+                const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                  headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+                });
+                if (!userRes.ok) {
+                  throw new Error(`Profile fetch failed (${userRes.status})`);
+                }
+                const userInfo = await userRes.json();
+                const userEmail = (userInfo.email || '').trim().toLowerCase();
+
+                if (!userEmail) {
+                  setSubmitting(false);
+                  setLocalError('Could not retrieve email from Google profile.');
+                  return;
+                }
+
+                // Check Admin authorization
+                if (adminSheetService.isAuthorizedAdminEmail(userEmail)) {
+                  adminSheetService.setAdminAuthenticated(true, {
+                    email: userEmail,
+                    name: userInfo.name || 'Administrator',
+                    picture: userInfo.picture,
+                  });
+                  setSubmitting(false);
+                  navigate(ROUTES.ADMIN);
+                  return;
+                }
+
+                // Student login
+                const res = await loginWithGoogle('', userEmail, userInfo.picture);
+                setSubmitting(false);
+                if (res.isAdmin) {
+                  navigate(ROUTES.ADMIN);
+                } else if (res.success) {
+                  navigate(ROUTES.DASHBOARD);
+                }
+              } catch (fetchErr: any) {
+                setSubmitting(false);
+                setLocalError('Failed to verify Google account: ' + (fetchErr?.message || 'Network error'));
+              }
+            } else {
+              setSubmitting(false);
+            }
+          },
         });
+
+        tokenClient.requestAccessToken({ prompt: 'select_account' });
         return;
-      } catch (err) {
-        console.warn('Google prompt fallback:', err);
+      } catch (err: any) {
+        setSubmitting(false);
+        console.warn('OAuth tokenClient failed, attempting prompt fallback:', err);
       }
+    }
+
+    // Fallback: One-tap prompt
+    if (window.google?.accounts?.id) {
+      window.google.accounts.id.prompt((notification: any) => {
+        if (notification.isNotDisplayed()) {
+          const reason = notification.getNotDisplayedReason?.() || 'restricted by browser';
+          setLocalError(
+            `Google prompt not displayed (${reason}). Please ensure this domain is added to Authorized JavaScript Origins in Google Cloud Console.`
+          );
+        }
+      });
     }
   };
 
@@ -204,10 +289,11 @@ export const LoginPage: React.FC = () => {
             )}
 
             {/* Error Notification */}
-            {error && !error.toLowerCase().includes('session') && (
+            {(localError || (error && !error.toLowerCase().includes('session'))) && (
               <div
                 className={`mb-5 p-3.5 sm:p-4 rounded-xl border text-xs transition-all animate-shake ${
-                  error.toLowerCase().includes('lock') || error.toLowerCase().includes('maintenance')
+                  (localError || error || '').toLowerCase().includes('lock') ||
+                  (localError || error || '').toLowerCase().includes('maintenance')
                     ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-900/60 text-rose-900 dark:text-rose-200'
                     : 'bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-200'
                 }`}
@@ -217,11 +303,14 @@ export const LoginPage: React.FC = () => {
                   <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold mb-1 text-rose-900 dark:text-rose-100">
-                      {error.toLowerCase().includes('lock') || error.toLowerCase().includes('maintenance')
+                      {(localError || error || '').toLowerCase().includes('lock') ||
+                      (localError || error || '').toLowerCase().includes('maintenance')
                         ? 'Portal Locked'
-                        : 'Access Denied'}
+                        : 'Sign-In Notice'}
                     </p>
-                    <p className="leading-relaxed text-slate-700 dark:text-slate-300 break-words">{error}</p>
+                    <p className="leading-relaxed text-slate-700 dark:text-slate-300 break-words">
+                      {localError || error}
+                    </p>
                     <div className="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-zinc-800/60 flex items-center justify-between gap-2">
                       <a
                         href={APP_CONFIG.adminContactUrl}
@@ -231,7 +320,10 @@ export const LoginPage: React.FC = () => {
                         <span>Contact Admin</span>
                       </a>
                       <button
-                        onClick={clearError}
+                        onClick={() => {
+                          clearError();
+                          setLocalError(null);
+                        }}
                         className="text-slate-500 dark:text-slate-400 hover:text-slate-700 underline text-[11px] flex-shrink-0"
                       >
                         Dismiss

@@ -5,7 +5,7 @@ import { adminSheetService } from '../services/adminSheetService';
 import { PortalSettings } from '../types/admin';
 
 interface AuthContextType extends AuthState {
-  loginWithGoogle: (credential: string, emailHint?: string) => Promise<{ success: boolean; isAdmin?: boolean; error?: string }>;
+  loginWithGoogle: (credential: string, emailHint?: string, profilePictureUrl?: string) => Promise<{ success: boolean; isAdmin?: boolean; error?: string }>;
   loginAsStudent: (student: Student) => void;
   logout: (msg?: string) => void;
   clearError: () => void;
@@ -152,10 +152,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const loginWithGoogle = async (credential: string, emailHint?: string): Promise<{ success: boolean; isAdmin?: boolean; error?: string }> => {
+  const loginWithGoogle = async (credential: string, emailHint?: string, profilePictureUrl?: string): Promise<{ success: boolean; isAdmin?: boolean; error?: string }> => {
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
     try {
-      const result = await authService.loginWithGoogle(credential, emailHint);
+      const result = await authService.loginWithGoogle(credential, emailHint, profilePictureUrl);
 
       if (result.isAdmin) {
         setState((prev) => ({

@@ -55,6 +55,7 @@ export const AdminPortalPage: React.FC = () => {
   );
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleError, setGoogleError] = useState('');
+  const [hasAdminGsiButton, setHasAdminGsiButton] = useState(false);
   const adminGsiButtonRef = useRef<HTMLDivElement>(null);
 
   // Dashboard Data State
@@ -426,6 +427,7 @@ export const AdminPortalPage: React.FC = () => {
             shape: 'rectangular',
             logo_alignment: 'left',
           });
+          setHasAdminGsiButton(true);
         } catch (err) {
           console.warn('Admin Google GSI error:', err);
         }
@@ -444,6 +446,68 @@ export const AdminPortalPage: React.FC = () => {
       return () => clearInterval(interval);
     }
   }, [isAuthenticated]);
+
+  const handleAdminGoogleClick = () => {
+    setGoogleError('');
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+    if (!clientId) {
+      setGoogleError('Google Client ID is missing. Please ensure VITE_GOOGLE_CLIENT_ID is configured in Netlify.');
+      return;
+    }
+    if (!window.google) {
+      setGoogleError('Google Identity Services failed to load. Please disable ad blockers and refresh.');
+      return;
+    }
+    if (window.google?.accounts?.oauth2) {
+      try {
+        setGoogleLoading(true);
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'email profile openid',
+          callback: async (tokenResponse: any) => {
+            if (tokenResponse.error) {
+              setGoogleLoading(false);
+              setGoogleError(`Google Sign-In failed: ${tokenResponse.error_description || tokenResponse.error}`);
+              return;
+            }
+            if (tokenResponse.access_token) {
+              try {
+                const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                  headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+                });
+                const userInfo = await userRes.json();
+                const email = (userInfo.email || '').toLowerCase().trim();
+                if (adminSheetService.isAuthorizedAdminEmail(email)) {
+                  const userObj = {
+                    email,
+                    name: userInfo.name || 'Administrator',
+                    picture: userInfo.picture,
+                  };
+                  adminSheetService.setAdminAuthenticated(true, userObj);
+                  setAdminUser(userObj);
+                  setIsAuthenticated(true);
+                  refreshData();
+                } else {
+                  setGoogleError(`Access Denied: The account "${email}" is not authorized for administrative access.`);
+                }
+              } catch (err: any) {
+                setGoogleError('Failed to verify Google credentials: ' + (err?.message || 'Network error'));
+              } finally {
+                setGoogleLoading(false);
+              }
+            } else {
+              setGoogleLoading(false);
+            }
+          },
+        });
+        tokenClient.requestAccessToken({ prompt: 'select_account' });
+        return;
+      } catch (err) {
+        setGoogleLoading(false);
+        console.warn('Admin tokenClient failed:', err);
+      }
+    }
+  };
 
   // Handle Admin Logout
   const handleLogout = () => {
@@ -816,6 +880,36 @@ function jsonResponse(obj) {
                     Sign in with your authorized Google Account
                   </p>
                   <div ref={adminGsiButtonRef} className="flex justify-center w-full min-h-[44px]" />
+                  {!hasAdminGsiButton && (
+                    <button
+                      type="button"
+                      onClick={handleAdminGoogleClick}
+                      disabled={googleLoading}
+                      className="w-full min-h-[48px] py-3 px-4 rounded-xl border border-slate-300 dark:border-[#2A2A32] bg-white dark:bg-[#121216] hover:bg-slate-50 dark:hover:bg-[#18181F] text-slate-800 dark:text-slate-100 font-medium text-sm flex items-center justify-center gap-3 shadow-sm hover:shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#8048A8] disabled:opacity-60 disabled:cursor-not-allowed group touch-manipulation"
+                    >
+                      <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
+                        <path
+                          fill="#4285F4"
+                          d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z"
+                        />
+                        <path
+                          fill="#34A853"
+                          d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+                        />
+                        <path
+                          fill="#FBBC05"
+                          d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+                        />
+                        <path
+                          fill="#EA4335"
+                          d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                        />
+                      </svg>
+                      <span className="font-semibold text-sm group-hover:text-slate-900 dark:group-hover:text-white leading-tight">
+                        {googleLoading ? 'Signing In...' : 'Sign in with Google'}
+                      </span>
+                    </button>
+                  )}
                   {googleLoading && (
                     <p className="text-xs text-[#8048A8] dark:text-[#D1A7FF] mt-2 animate-pulse">
                       Verifying administrator identity...
