@@ -210,9 +210,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  // 30-minute Session timeout management
+  // 30-minute Session timeout management (skipped for admin sessions)
   useEffect(() => {
     if (!state.isAuthenticated) return;
+
+    // Admin sessions and admin-inspect sessions never expire
+    const isAdmin = adminSheetService.isAdminAuthenticated();
+    const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+    if (isAdmin || isInspecting) {
+      // Still check portal lock periodically, but no session timeout
+      const interval = setInterval(() => {
+        checkPortalLock(false);
+      }, 10000);
+      return () => clearInterval(interval);
+    }
 
     if (authService.isSessionExpired()) {
       logout();
@@ -226,14 +237,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logout();
     }, remainingTime);
 
-    // Periodic check (every 10s) in case setTimeout was throttled/paused (e.g., laptop sleep/hibernation)
+    // Periodic check (every 3s) for instant real-time portal lock synchronization across all users
     const interval = setInterval(() => {
       if (authService.isSessionExpired()) {
         logout();
       } else {
         checkPortalLock(false);
       }
-    }, 10000);
+    }, 3000);
 
     // Immediate check on tab visibility change or window focus
     const handleVisibilityOrFocus = () => {

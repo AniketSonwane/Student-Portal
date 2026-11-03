@@ -1,7 +1,7 @@
 import { LoginLog, ChangeRequest, PortalSettings, AdminStats } from '../types/admin';
 import { profileService } from './profile';
 import { cleanupUnnecessaryStorage } from '../utils/cleanStorage';
-import { TIMETABLE_SPREADSHEET_ID, EXAM_DATES_SPREADSHEET_ID } from '../config/sheetsConfig';
+import { TIMETABLE_SPREADSHEET_ID, EXAM_DATES_SPREADSHEET_ID, ADMIN_SPREADSHEET_ID } from '../config/sheetsConfig';
 
 const STORAGE_KEYS = {
   LOGS: 'student_portal_admin_logs',
@@ -262,7 +262,7 @@ export const adminSheetService = {
         logs: this.getLogs(),
         requests: this.getChangeRequests(),
         settings: this.getPortalSettings(),
-        error: err?.message || 'Failed to fetch from Google Sheet',
+        error: err?.message || 'Failed to fetch database records',
       };
     }
   },
@@ -407,6 +407,34 @@ export const adminSheetService = {
     }
 
     return newReq;
+  },
+
+  /**
+   * Complete / Dismiss a Change Request (removes it from the pending list)
+   */
+  async deleteChangeRequest(id: string): Promise<boolean> {
+    const list = this.getChangeRequests();
+    const updated = list.filter((r) => r.id !== id);
+    localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(updated));
+
+    const scriptUrl = this.getScriptUrl();
+    if (scriptUrl) {
+      try {
+        await fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'DELETE_REQUEST',
+            id,
+          }),
+        });
+      } catch (err) {
+        console.warn('Could not sync request completion to Google Sheet:', err);
+      }
+    }
+
+    return true;
   },
 
   /**
@@ -572,12 +600,58 @@ export const adminSheetService = {
   async fetchLiveSettings(forceRefresh = false): Promise<PortalSettings> {
     const cached = this.getPortalSettings();
     const now = Date.now();
-    // Cache for 60 seconds unless forced
-    if (!forceRefresh && this._lastSettingsFetch && now - this._lastSettingsFetch < 60000) {
+    // Cache for 2 seconds unless forced, ensuring real-time instant status updates
+    if (!forceRefresh && this._lastSettingsFetch && now - this._lastSettingsFetch < 2000) {
       return cached;
     }
 
     const scriptUrl = this.getScriptUrl();
+    const adminSheetId = ADMIN_SPREADSHEET_ID;
+
+    // Fast-path 1: Direct Google Sheet GViz CSV fetch (blazing fast, ~200ms)
+    if (adminSheetId) {
+      try {
+        const isDev = import.meta.env.DEV;
+        const gvizUrl = isDev
+          ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=Settings`
+          : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=Settings`;
+
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 1800);
+        const gRes = await fetch(gvizUrl, { signal: ctrl.signal });
+        clearTimeout(tid);
+
+        if (gRes.ok) {
+          const csvText = await gRes.text();
+          if (csvText && csvText.includes('is_locked')) {
+            const lines = csvText.split(/\r?\n/);
+            for (const line of lines) {
+              const cleaned = line.replace(/"/g, '').trim();
+              if (!cleaned) continue;
+              const parts = cleaned.split(',');
+              const k = (parts[0] || '').trim().toLowerCase();
+              const v = (parts[1] || '').trim();
+              if (k === 'is_locked') {
+                cached.is_locked = v.toUpperCase() === 'TRUE';
+              }
+              if (k === 'lock_reason') {
+                cached.lock_reason = v || 'System maintenance in progress.';
+              }
+            }
+            localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(cached));
+            this._lastSettingsFetch = now;
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('portal_settings_changed', { detail: cached }));
+            }
+            return cached;
+          }
+        }
+      } catch {
+        // Fallback to Apps Script below
+      }
+    }
+
+    // Fast-path 2: Apps Script Web App
     if (!scriptUrl) return cached;
 
     try {

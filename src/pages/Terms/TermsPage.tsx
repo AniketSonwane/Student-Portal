@@ -58,16 +58,16 @@ export const TermsPage: React.FC = () => {
             {/* 1 */}
             <div className="space-y-2">
               <h2 className="text-sm sm:text-base font-semibold text-slate-900 dark:text-white">
-                1. Unofficial and Independent Platform
+                1. Independent Platform
               </h2>
               <p>
-                This website is an <strong className="text-slate-800 dark:text-slate-100">independently created and unofficial student portal</strong>.
+                This website is an <strong className="text-slate-800 dark:text-slate-100">independently created student portal</strong>.
               </p>
               <p>
-                The website is <strong className="text-slate-800 dark:text-slate-100">not affiliated with, owned by, operated by, endorsed by, or officially connected with any school, college, university, educational institution, government organization, examination authority, board, or other official organization unless explicitly stated otherwise.</strong>
+                The website is <strong className="text-slate-800 dark:text-slate-100">not affiliated with, owned by, operated by, endorsed by, or connected with any school, college, university, educational institution, government organization, examination authority, board, or other institution unless explicitly stated otherwise.</strong>
               </p>
               <p>
-                Nothing on this website should be considered an official communication, notification, record, document, result, certificate, notice, or announcement from any institution or authority.
+                Nothing on this website should be considered a formal institutional communication, notification, record, document, result, certificate, notice, or announcement from any institution or authority.
               </p>
             </div>
 
@@ -77,7 +77,7 @@ export const TermsPage: React.FC = () => {
                 2. Source of Student Data
               </h2>
               <p>
-                Any student-related information displayed on this website <strong className="text-slate-800 dark:text-slate-100">is not obtained from official institutional sources</strong> unless specifically mentioned.
+                Any student-related information displayed on this website <strong className="text-slate-800 dark:text-slate-100">is not obtained from primary institutional sources</strong> unless specifically mentioned.
               </p>
               <p>The information may have been:</p>
               <ul className="list-disc list-inside space-y-1 pl-1 text-slate-600 dark:text-slate-300">
@@ -91,17 +91,17 @@ export const TermsPage: React.FC = () => {
                 <li>Added as sample, placeholder, or illustrative information.</li>
               </ul>
               <p>
-                Therefore, the information displayed on this website <strong className="text-slate-800 dark:text-slate-100">may not be accurate, complete, current, or officially verified</strong>.
+                Therefore, the information displayed on this website <strong className="text-slate-800 dark:text-slate-100">may not be accurate, complete, current, or institutionally verified</strong>.
               </p>
             </div>
 
             {/* 3 */}
             <div className="space-y-2">
               <h2 className="text-sm sm:text-base font-semibold text-slate-900 dark:text-white">
-                3. No Official Status
+                3. Independent Status
               </h2>
               <p>
-                <strong className="text-slate-800 dark:text-slate-100">Nothing on this website should be treated as official.</strong>
+                <strong className="text-slate-800 dark:text-slate-100">Nothing on this website should be treated as authoritative or institutional.</strong>
               </p>
               <p>This includes, but is not limited to:</p>
               <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1 list-disc list-inside pl-1 text-slate-600 dark:text-slate-300">
@@ -122,7 +122,7 @@ export const TermsPage: React.FC = () => {
                 <li className="sm:col-span-2">Any other information displayed on the website</li>
               </ul>
               <p className="pt-1">
-                Users should verify important information directly with the relevant official institution or authority.
+                Users should verify important information directly with the relevant institution or authority.
               </p>
             </div>
 
@@ -141,7 +141,7 @@ export const TermsPage: React.FC = () => {
                 <li>Maintaining information in a convenient format.</li>
               </ul>
               <p>
-                The website does not claim to replace any official student portal, institutional system, examination portal, or government website.
+                The website does not claim to replace any institutional student portal, institutional system, examination portal, or government website.
               </p>
             </div>
 
@@ -156,11 +156,11 @@ export const TermsPage: React.FC = () => {
                 <li>Complete.</li>
                 <li>Correct.</li>
                 <li>Current.</li>
-                <li>Officially verified.</li>
+                <li>Institutionally verified.</li>
                 <li>Suitable for making academic or administrative decisions.</li>
               </ul>
               <p>
-                Users are responsible for independently verifying important information through the appropriate official source.
+                Users are responsible for independently verifying important information through the appropriate institutional source.
               </p>
             </div>
 
@@ -170,10 +170,10 @@ export const TermsPage: React.FC = () => {
                 6. User Responsibility
               </h2>
               <p>
-                Users should not rely solely on information displayed on this website for important academic, administrative, financial, examination, admission, or other official decisions.
+                Users should not rely solely on information displayed on this website for important academic, administrative, financial, examination, admission, or other critical decisions.
               </p>
               <p>
-                For official information, users should contact their relevant institution or visit the institution&apos;s official website or authorized portal.
+                For verified information, users should contact their relevant institution or visit the institution&apos;s primary website or authorized portal.
               </p>
             </div>
 
@@ -236,7 +236,7 @@ export const TermsPage: React.FC = () => {
               </h2>
               <p>Users must not use the website to:</p>
               <ul className="list-disc list-inside space-y-1 pl-1 text-slate-600 dark:text-slate-300">
-                <li>Misrepresent information as official.</li>
+                <li>Misrepresent information as authoritative or institutional.</li>
                 <li>Impersonate an educational institution or authority.</li>
                 <li>Misuse another person&apos;s information.</li>
                 <li>Commit fraud or deception.</li>
@@ -279,11 +279,11 @@ export const TermsPage: React.FC = () => {
               </h2>
               <p>By using this website, you acknowledge that:</p>
               <ul className="list-disc list-inside space-y-1 pl-1 text-slate-600 dark:text-slate-300">
-                <li>This is an independent and unofficial platform.</li>
-                <li>The information displayed may not come from official sources.</li>
+                <li>This is an independent platform.</li>
+                <li>The information displayed may not come from primary institutional sources.</li>
                 <li>Student data may be personally collected, mutually provided, assumed, estimated, or created for learning and management purposes.</li>
-                <li>Information displayed on the website should not be considered official unless explicitly identified as such.</li>
-                <li>Important information should be verified through appropriate official sources.</li>
+                <li>Information displayed on the website should not be considered authoritative unless explicitly identified as such.</li>
+                <li>Important information should be verified through appropriate institutional sources.</li>
               </ul>
               <p className="pt-1">
                 If you do not agree with these Terms and Conditions, please do not use the website.
@@ -316,7 +316,7 @@ export const TermsPage: React.FC = () => {
                     Important Notice
                   </p>
                   <p className="text-xs sm:text-sm leading-relaxed text-amber-900/90 dark:text-amber-200/90">
-                    This website is independently created and is not an official source of student or institutional information. All information is personally collected, mutually provided, assumed, estimated, or created for learning, demonstration, organization, and management purposes. Nothing on this website should be considered official unless explicitly stated and verified through an authorized official source.
+                    This website is independently created and is not a formal source of student or institutional information. All information is personally collected, mutually provided, assumed, estimated, or created for learning, demonstration, organization, and management purposes. Nothing on this website should be considered binding unless explicitly stated and verified through an authorized source.
                   </p>
                 </div>
               </div>

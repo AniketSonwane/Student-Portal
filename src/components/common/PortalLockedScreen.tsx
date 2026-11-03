@@ -9,7 +9,7 @@ interface PortalLockedScreenProps {
 }
 
 export const PortalLockedScreen: React.FC<PortalLockedScreenProps> = ({
-  reason = 'System maintenance and grade synchronisation in progress.',
+  reason = 'System maintenance and academic updates in progress.',
 }) => {
   const { checkPortalLock, logout } = useAuth();
   const navigate = useNavigate();
@@ -52,7 +52,7 @@ export const PortalLockedScreen: React.FC<PortalLockedScreenProps> = ({
         </h1>
 
         <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mb-6 max-w-md mx-auto leading-relaxed">
-          The administrator has temporarily paused student access to perform system updates, mark synchronisations, or semester audits.
+          The administrator has temporarily paused student access to perform scheduled system maintenance or semester audits.
         </p>
 
         {/* Maintenance Message Box */}

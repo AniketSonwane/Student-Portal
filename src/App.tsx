@@ -46,7 +46,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   if (isPortalLocked && !isInspecting && !isAdmin) {
     return (
       <PortalLockedScreen
-        reason={lockReason || 'System maintenance and grade synchronisation in progress.'}
+        reason={lockReason || 'System maintenance and academic updates in progress.'}
       />
     );
   }
@@ -92,7 +92,7 @@ export const App: React.FC = () => {
             {/* Admin Inspection Banner: Displays Back to Admin Dashboard button */}
             <AdminInspectionBanner />
 
-            <div className="flex-1">
+            <div className="flex-1 flex flex-col">
               <Routes>
                 {/* Public Routes */}
                 <Route

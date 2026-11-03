@@ -52,11 +52,11 @@ export const StatementPage: React.FC = () => {
         setMarks(res.data);
       } else {
         setMarks(null);
-        setError(res.error || `Unable to load official academic statement for Semester ${sem}.`);
+        setError(res.error || `Unable to load academic statement for Semester ${sem}.`);
       }
     } catch {
       setMarks(null);
-      setError('Unable to load official academic statement from records.');
+      setError('Unable to load academic statement from records.');
     } finally {
       setIsLoading(false);
     }

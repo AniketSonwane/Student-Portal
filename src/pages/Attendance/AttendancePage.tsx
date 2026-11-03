@@ -308,7 +308,7 @@ export const AttendancePage: React.FC = () => {
               isFadingOut ? 'animate-fade-out' : 'animate-fade-in'
             }`}
           >
-            <LoadingState message="Fetching live attendance records from server..." />
+            <LoadingState message="Loading attendance records..." />
           </div>
         ) : isUnavailable ? (
           /* When Sem 1 or Sem 2 is selected: Show Not Available as requested */

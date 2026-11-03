@@ -156,7 +156,7 @@ export const MarksPage: React.FC = () => {
       }
     } catch {
       setMarks(null);
-      setError(`Unable to load semester ${sem} marks from Google Sheets.`);
+      setError(`Unable to load semester ${sem} marks.`);
     } finally {
       setIsFadingOut(true);
       setTimeout(() => {
@@ -344,7 +344,7 @@ export const MarksPage: React.FC = () => {
                 leftIcon={<FileText className="w-3.5 h-3.5 text-[#8048A8] dark:text-[#D1A7FF]" />}
                 rightIcon={<ExternalLink className="w-3 h-3 opacity-70" />}
                 className="flex-shrink-0 px-2.5 sm:px-3 py-1.5 text-xs touch-manipulation min-h-[36px]"
-                title="Open Official Grade Statement in New Tab to Download / Print PDF"
+                title="Open Grade Statement in New Tab to Download / Print PDF"
               >
                 <span className="hidden sm:inline">Statement</span>
                 <span className="sm:hidden">PDF</span>
@@ -376,7 +376,7 @@ export const MarksPage: React.FC = () => {
               isFadingOut ? 'animate-fade-out' : 'animate-fade-in'
             }`}
           >
-            <LoadingState message="Fetching live semester marks from server..." />
+            <LoadingState message="Loading semester marks..." />
           </div>
         )}
 
@@ -422,7 +422,7 @@ export const MarksPage: React.FC = () => {
               />
             </div>
 
-            {/* Official Grade Statement Modal */}
+            {/* Grade Statement Modal */}
             <StatementModal
               isOpen={isStatementOpen}
               onClose={() => setIsStatementOpen(false)}

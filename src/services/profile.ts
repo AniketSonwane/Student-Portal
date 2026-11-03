@@ -205,7 +205,7 @@ export const profileService = {
       return {
         success: false,
         data: [],
-        error: `Unable to fetch Profile Google Sheet: ${lastError || 'Empty response'}`,
+        error: `Unable to load student profile: ${lastError || 'Empty response'}`,
       };
     }
 
@@ -215,7 +215,7 @@ export const profileService = {
         return {
           success: false,
           data: cachedProfileDirectory || [],
-          error: 'No valid student records found in Profile Google Sheet.',
+          error: 'No valid student records found in student directory.',
         };
       }
 
@@ -228,7 +228,7 @@ export const profileService = {
       return {
         success: false,
         data: cachedProfileDirectory || [],
-        error: `Failed to parse Profile Google Sheet: ${err?.message || 'Invalid format'}`,
+        error: `Failed to load student profile records: ${err?.message || 'Invalid format'}`,
       };
     }
   },

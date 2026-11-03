@@ -773,7 +773,7 @@ function isSubjectAllotted(r: string[], cols: number[], totalCol?: number): bool
     const val = r[c];
     if (val !== undefined && val !== null) {
       const s = val.trim();
-      if (s !== '' && s !== '-' && !s.includes('#')) {
+      if (s !== '' && s !== '-' && s !== '0' && s !== '0.00' && !s.includes('#')) {
         return true;
       }
     }
@@ -794,6 +794,70 @@ function parseSemester3Layout(
   nptelMap?: Map<string, { marks?: string; grade?: string }>
 ): StudentSemesterMarks[] {
   const students: StudentSemesterMarks[] = [];
+
+  // Determine if sheet has the new 171-column layout (with TAE-1, TAE-2, TAE-3 added to Open Electives)
+  // or legacy 159-column layout
+  const isNewLayout =
+    (rows[0] && rows[0].length >= 165) ||
+    (rows[1] && rows[1].length >= 165) ||
+    (rows[0] && rows[0][124] && rows[0][124].toUpperCase().includes('SOLAR')) ||
+    (rows[1] && rows[1][100] && rows[1][100].toUpperCase().includes('TAE')) ||
+    rows.some((row) => row.length >= 165);
+
+  // Grade Point & Credit Point column indices
+  // In new 171-column layout:
+  // GP: DMGT:142, CAO:143, DSA:144, DSAL:145, FCC:146, ED:147, ES:148, MDM:149, MDM-LAB:150, OE:151, CEP/FP:152, NPTEL:153, INC:154
+  // CP: DMGT:155, CAO:156, DSA:157, DSAL:158, FCC:159, ED:160, ES:161, MDM:162, MDM-LAB:163, OE:164, CEP/FP:165, NPTEL:166, INC:167
+  // In legacy 159-column layout:
+  // GP: DMGT:130, CAO:131, DSA:132, DSAL:133, FCC:134, ED:135, ES:136, MDM:137, MDM-LAB:138, OE:139, CEP/FP:140, NPTEL:141, INC:142
+  // CP: DMGT:143, CAO:144, DSA:145, DSAL:146, FCC:147, ED:148, ES:149, MDM:150, MDM-LAB:151, OE:152, CEP/FP:153, NPTEL:154, INC:155
+  const gpOffset = isNewLayout ? 142 : 130;
+  const cpOffset = isNewLayout ? 155 : 143;
+
+  const gpDMGT = gpOffset;
+  const gpCAO = gpOffset + 1;
+  const gpDSA = gpOffset + 2;
+  const gpDSAL = gpOffset + 3;
+  const gpFCC = gpOffset + 4;
+  const gpED = gpOffset + 5;
+  const gpES = gpOffset + 6;
+  const gpMDM = gpOffset + 7;
+  const gpMDMLab = gpOffset + 8;
+  const gpOE = gpOffset + 9;
+  const gpCEP = gpOffset + 10;
+  const gpNPTEL = gpOffset + 11;
+  const gpINC = gpOffset + 12;
+
+  const cpDMGT = cpOffset;
+  const cpCAO = cpOffset + 1;
+  const cpDSA = cpOffset + 2;
+  const cpDSAL = cpOffset + 3;
+  const cpFCC = cpOffset + 4;
+  const cpED = cpOffset + 5;
+  const cpES = cpOffset + 6;
+  const cpMDM = cpOffset + 7;
+  const cpMDMLab = cpOffset + 8;
+  const cpOE = cpOffset + 9;
+  const cpCEP = cpOffset + 10;
+  const cpNPTEL = cpOffset + 11;
+  const cpINC = cpOffset + 12;
+
+  // Post-OE Columns (CEP/FP, NPTEL, INCENTIVES, and Summary Totals)
+  const cepCols = isNewLayout
+    ? { obj: 133, rep: 134, att: 135, total: 136, grade: 137 }
+    : { obj: 121, rep: 122, att: 123, total: 124, grade: 125 };
+
+  const nptelCols = isNewLayout
+    ? { marks: 138, grade: 139 }
+    : { marks: 126, grade: 127 };
+
+  const incCols = isNewLayout
+    ? { grade: 140, score: 141 }
+    : { grade: 128, score: 129 };
+
+  const totalCreditsCol = isNewLayout ? 168 : 156;
+  const sgpaCol = isNewLayout ? 169 : 157;
+  const statusCol = isNewLayout ? 170 : 158;
 
   const getSubInfo = (code: string) => {
     const upper = code.trim().toUpperCase();
@@ -832,8 +896,8 @@ function parseSemester3Layout(
         total: cleanCell(r[9]),
         maxTotal: getSubInfo('DMGT').maxMarks || 100,
         grade: cleanCell(r[10], 'IP'),
-        gradePoint: cleanCell(r[130]),
-        creditPoints: cleanCell(r[143]),
+        gradePoint: cleanCell(r[gpDMGT]),
+        creditPoints: cleanCell(r[cpDMGT]),
       },
       {
         code: 'CAO',
@@ -841,19 +905,19 @@ function parseSemester3Layout(
         type: 'Theory',
         credits: getSubInfo('CAO').credits,
         assessments: [
-          { name: 'CAE-1', max: 20, score: cleanCell(r[11]) },
-          { name: 'CAE-2', max: 20, score: cleanCell(r[12]) },
-          { name: 'TAE-1', max: 5, score: cleanCell(r[13]) },
-          { name: 'TAE-2', max: 2.5, score: cleanCell(r[14]) },
-          { name: 'TAE-3', max: 2.5, score: cleanCell(r[15]) },
-          { name: 'Internals', max: 20, score: cleanCell(r[17]) },
-          { name: 'ESE', max: 30, score: cleanCell(r[16]) },
+          { name: 'CAE-1', max: 40, score: cleanCell(r[11]) },
+          { name: 'CAE-2', max: 40, score: cleanCell(r[12]) },
+          { name: 'TAE-1', max: 10, score: cleanCell(r[13]) },
+          { name: 'TAE-2', max: 5, score: cleanCell(r[14]) },
+          { name: 'TAE-3', max: 5, score: cleanCell(r[15]) },
+          { name: 'Internals', max: 40, score: cleanCell(r[17]) },
+          { name: 'ESE', max: 60, score: cleanCell(r[16]) },
         ],
         total: cleanCell(r[18]),
-        maxTotal: getSubInfo('CAO').maxMarks || 50,
+        maxTotal: getSubInfo('CAO').maxMarks || 100,
         grade: cleanCell(r[19], 'IP'),
-        gradePoint: cleanCell(r[131]),
-        creditPoints: cleanCell(r[144]),
+        gradePoint: cleanCell(r[gpCAO]),
+        creditPoints: cleanCell(r[cpCAO]),
       },
       {
         code: 'DSA',
@@ -873,8 +937,8 @@ function parseSemester3Layout(
         total: cleanCell(r[28]),
         maxTotal: getSubInfo('DSA').maxMarks || 100,
         grade: cleanCell(r[29], 'IP'),
-        gradePoint: cleanCell(r[132]),
-        creditPoints: cleanCell(r[145]),
+        gradePoint: cleanCell(r[gpDSA]),
+        creditPoints: cleanCell(r[cpDSA]),
       },
       {
         code: 'DSAL',
@@ -887,10 +951,10 @@ function parseSemester3Layout(
           { name: 'Practical', max: 25, score: cleanCell(r[32]) },
         ],
         total: cleanCell(r[33]),
-        maxTotal: getSubInfo('DSAL').maxMarks || 100,
+        maxTotal: getSubInfo('DSAL').maxMarks || 50,
         grade: cleanCell(r[34], 'IP'),
-        gradePoint: cleanCell(r[133]),
-        creditPoints: cleanCell(r[146]),
+        gradePoint: cleanCell(r[gpDSAL]),
+        creditPoints: cleanCell(r[cpDSAL]),
       },
       {
         code: 'FCC',
@@ -905,8 +969,8 @@ function parseSemester3Layout(
         total: cleanCell(r[38]),
         maxTotal: getSubInfo('FCC').maxMarks || 50,
         grade: cleanCell(r[39], 'IP'),
-        gradePoint: cleanCell(r[134]),
-        creditPoints: cleanCell(r[147]),
+        gradePoint: cleanCell(r[gpFCC]),
+        creditPoints: cleanCell(r[cpFCC]),
       },
       {
         code: 'ED',
@@ -914,16 +978,16 @@ function parseSemester3Layout(
         type: 'Theory',
         credits: getSubInfo('ED').credits,
         assessments: [
-          { name: 'CAE-2', max: 40, score: cleanCell(r[40]) },
+          { name: 'CAE-2', max: 20, score: cleanCell(r[40]) },
           { name: 'TAE-1', max: 10, score: cleanCell(r[41]) },
-          { name: 'TAE-2', max: 5, score: cleanCell(r[42]) },
-          { name: 'TAE-3', max: 5, score: cleanCell(r[43]) },
+          { name: 'TAE-2', max: 10, score: cleanCell(r[42]) },
+          { name: 'TAE-3', max: 10, score: cleanCell(r[43]) },
         ],
         total: cleanCell(r[44]),
         maxTotal: getSubInfo('ED').maxMarks || 50,
         grade: cleanCell(r[45], 'IP'),
-        gradePoint: cleanCell(r[135]),
-        creditPoints: cleanCell(r[148]),
+        gradePoint: cleanCell(r[gpED]),
+        creditPoints: cleanCell(r[cpED]),
       },
       {
         code: 'ES',
@@ -936,10 +1000,10 @@ function parseSemester3Layout(
           { name: 'Attendance', max: 10, score: cleanCell(r[48]) },
         ],
         total: cleanCell(r[49]),
-        maxTotal: getSubInfo('ES').maxMarks || 100,
+        maxTotal: getSubInfo('ES').maxMarks || 50,
         grade: cleanCell(r[50], 'IP'),
-        gradePoint: cleanCell(r[136]),
-        creditPoints: cleanCell(r[149]),
+        gradePoint: cleanCell(r[gpES]),
+        creditPoints: cleanCell(r[cpES]),
       },
       {
         code: 'CEP/FP',
@@ -947,15 +1011,15 @@ function parseSemester3Layout(
         type: 'Activity',
         credits: getSubInfo('CEP/FP').credits,
         assessments: [
-          { name: 'Objective Test', max: 20, score: cleanCell(r[121]) },
-          { name: 'Report', max: 20, score: cleanCell(r[122]) },
-          { name: 'Attendance', max: 10, score: cleanCell(r[123]) },
+          { name: 'Objective Test', max: 20, score: cleanCell(r[cepCols.obj]) },
+          { name: 'Report', max: 20, score: cleanCell(r[cepCols.rep]) },
+          { name: 'Attendance', max: 10, score: cleanCell(r[cepCols.att]) },
         ],
-        total: cleanCell(r[124]),
+        total: cleanCell(r[cepCols.total]),
         maxTotal: getSubInfo('CEP/FP').maxMarks || 50,
-        grade: cleanCell(r[125], 'IP'),
-        gradePoint: cleanCell(r[140]),
-        creditPoints: cleanCell(r[153]),
+        grade: cleanCell(r[cepCols.grade], 'IP'),
+        gradePoint: cleanCell(r[gpCEP]),
+        creditPoints: cleanCell(r[cpCEP]),
       },
     ];
 
@@ -983,8 +1047,8 @@ function parseSemester3Layout(
           total: cleanCell(r[58]),
           maxTotal: getSubInfo('WFBFD').maxMarks || 50,
           grade: cleanCell(r[59], 'IP'),
-          gradePoint: cleanCell(r[137]),
-          creditPoints: cleanCell(r[150]),
+          gradePoint: cleanCell(r[gpMDM]),
+          creditPoints: cleanCell(r[cpMDM]),
         },
         {
           code: 'WFBFDL',
@@ -999,8 +1063,8 @@ function parseSemester3Layout(
           total: cleanCell(r[63]),
           maxTotal: getSubInfo('WFBFDL').maxMarks || 50,
           grade: cleanCell(r[64], 'IP'),
-          gradePoint: cleanCell(r[138]),
-          creditPoints: cleanCell(r[151]),
+          gradePoint: cleanCell(r[gpMDMLab]),
+          creditPoints: cleanCell(r[cpMDMLab]),
         }
       );
     }
@@ -1028,8 +1092,8 @@ function parseSemester3Layout(
           total: cleanCell(r[72]),
           maxTotal: getSubInfo('DEFM').maxMarks || 50,
           grade: cleanCell(r[73], 'IP'),
-          gradePoint: cleanCell(r[137]),
-          creditPoints: cleanCell(r[150]),
+          gradePoint: cleanCell(r[gpMDM]),
+          creditPoints: cleanCell(r[cpMDM]),
         },
         {
           code: 'DEFML',
@@ -1044,8 +1108,8 @@ function parseSemester3Layout(
           total: cleanCell(r[77]),
           maxTotal: getSubInfo('DEFML').maxMarks || 50,
           grade: cleanCell(r[78], 'IP'),
-          gradePoint: cleanCell(r[138]),
-          creditPoints: cleanCell(r[151]),
+          gradePoint: cleanCell(r[gpMDMLab]),
+          creditPoints: cleanCell(r[cpMDMLab]),
         }
       );
     }
@@ -1058,19 +1122,19 @@ function parseSemester3Layout(
         type: 'Theory',
         credits: getSubInfo('BE').credits,
         assessments: [
-          { name: 'CAE-1', max: 20, score: cleanCell(r[79]) },
-          { name: 'CAE-2', max: 20, score: cleanCell(r[80]) },
-          { name: 'TAE-1', max: 5, score: cleanCell(r[81]) },
-          { name: 'TAE-2', max: 2.5, score: cleanCell(r[82]) },
-          { name: 'TAE-3', max: 2.5, score: cleanCell(r[83]) },
-          { name: 'Internals', max: 20, score: cleanCell(r[85]) },
-          { name: 'ESE', max: 30, score: cleanCell(r[84]) },
+          { name: 'CAE-1', max: 40, score: cleanCell(r[79]) },
+          { name: 'CAE-2', max: 40, score: cleanCell(r[80]) },
+          { name: 'TAE-1', max: 10, score: cleanCell(r[81]) },
+          { name: 'TAE-2', max: 5, score: cleanCell(r[82]) },
+          { name: 'TAE-3', max: 5, score: cleanCell(r[83]) },
+          { name: 'Internals', max: 40, score: cleanCell(r[85]) },
+          { name: 'ESE', max: 60, score: cleanCell(r[84]) },
         ],
         total: cleanCell(r[86]),
-        maxTotal: getSubInfo('BE').maxMarks || 50,
+        maxTotal: getSubInfo('BE').maxMarks || 100,
         grade: cleanCell(r[87], 'IP'),
-        gradePoint: cleanCell(r[137]),
-        creditPoints: cleanCell(r[150]),
+        gradePoint: cleanCell(r[gpMDM]),
+        creditPoints: cleanCell(r[cpMDM]),
       });
     }
 
@@ -1082,27 +1146,36 @@ function parseSemester3Layout(
         type: 'Theory',
         credits: getSubInfo('BA').credits,
         assessments: [
-          { name: 'CAE-1', max: 20, score: cleanCell(r[88]) },
-          { name: 'CAE-2', max: 20, score: cleanCell(r[89]) },
-          { name: 'TAE-1', max: 5, score: cleanCell(r[90]) },
-          { name: 'TAE-2', max: 2.5, score: cleanCell(r[91]) },
-          { name: 'TAE-3', max: 2.5, score: cleanCell(r[92]) },
-          { name: 'Internals', max: 20, score: cleanCell(r[94]) },
-          { name: 'ESE', max: 30, score: cleanCell(r[93]) },
+          { name: 'CAE-1', max: 40, score: cleanCell(r[88]) },
+          { name: 'CAE-2', max: 40, score: cleanCell(r[89]) },
+          { name: 'TAE-1', max: 10, score: cleanCell(r[90]) },
+          { name: 'TAE-2', max: 5, score: cleanCell(r[91]) },
+          { name: 'TAE-3', max: 5, score: cleanCell(r[92]) },
+          { name: 'Internals', max: 40, score: cleanCell(r[94]) },
+          { name: 'ESE', max: 60, score: cleanCell(r[93]) },
         ],
         total: cleanCell(r[95]),
-        maxTotal: getSubInfo('BA').maxMarks || 50,
+        maxTotal: getSubInfo('BA').maxMarks || 100,
         grade: cleanCell(r[96], 'IP'),
-        gradePoint: cleanCell(r[137]),
-        creditPoints: cleanCell(r[150]),
+        gradePoint: cleanCell(r[gpMDM]),
+        creditPoints: cleanCell(r[cpMDM]),
       });
     }
 
     // 3. OE Subjects (Open Electives taken by select students)
-    const hasDcd = isSubjectAllotted(r, [97, 98, 99], 101);
-    const hasEst = isSubjectAllotted(r, [103, 104, 105], 107);
-    const hasEdp = isSubjectAllotted(r, [109, 110, 111], 113);
-    const hasSps = isSubjectAllotted(r, [115, 116, 117], 119);
+    // Only check actual exam assessment columns (CAE, TAE, ESE), excluding Internals which defaults to 0
+    const hasDcd = isNewLayout
+      ? isSubjectAllotted(r, [97, 98, 99, 100, 101, 102], 104)
+      : isSubjectAllotted(r, [97, 98, 99], 101);
+    const hasEst = isNewLayout
+      ? isSubjectAllotted(r, [106, 107, 108, 109, 110, 111], 113)
+      : isSubjectAllotted(r, [103, 104, 105], 107);
+    const hasEdp = isNewLayout
+      ? isSubjectAllotted(r, [115, 116, 117, 118, 119, 120], 122)
+      : isSubjectAllotted(r, [109, 110, 111], 113);
+    const hasSps = isNewLayout
+      ? isSubjectAllotted(r, [124, 125, 126, 127, 128, 129], 131)
+      : isSubjectAllotted(r, [115, 116, 117], 119);
 
     if (hasDcd) {
       subjects.push({
@@ -1110,17 +1183,27 @@ function parseSemester3Layout(
         name: getSubInfo('DCD').name,
         type: 'Theory',
         credits: getSubInfo('DCD').credits,
-        assessments: [
-          { name: 'CAE-1', max: 20, score: cleanCell(r[97]) },
-          { name: 'CAE-2', max: 20, score: cleanCell(r[98]) },
-          { name: 'Internals', max: 20, score: cleanCell(r[100]) },
-          { name: 'ESE', max: 30, score: cleanCell(r[99]) },
-        ],
-        total: cleanCell(r[101]),
-        maxTotal: getSubInfo('DCD').maxMarks || 50,
-        grade: cleanCell(r[102], 'IP'),
-        gradePoint: cleanCell(r[139]),
-        creditPoints: cleanCell(r[152]),
+        assessments: isNewLayout
+          ? [
+              { name: 'CAE-1', max: 40, score: cleanCell(r[97]) },
+              { name: 'CAE-2', max: 40, score: cleanCell(r[98]) },
+              { name: 'TAE-1', max: 10, score: cleanCell(r[100]) },
+              { name: 'TAE-2', max: 5, score: cleanCell(r[101]) },
+              { name: 'TAE-3', max: 5, score: cleanCell(r[102]) },
+              { name: 'Internals', max: 40, score: cleanCell(r[103]) },
+              { name: 'ESE', max: 60, score: cleanCell(r[99]) },
+            ]
+          : [
+              { name: 'CAE-1', max: 40, score: cleanCell(r[97]) },
+              { name: 'CAE-2', max: 40, score: cleanCell(r[98]) },
+              { name: 'Internals', max: 40, score: cleanCell(r[100]) },
+              { name: 'ESE', max: 60, score: cleanCell(r[99]) },
+            ],
+        total: cleanCell(r[isNewLayout ? 104 : 101]),
+        maxTotal: getSubInfo('DCD').maxMarks || 100,
+        grade: cleanCell(r[isNewLayout ? 105 : 102], 'IP'),
+        gradePoint: cleanCell(r[gpOE]),
+        creditPoints: cleanCell(r[cpOE]),
       });
     }
 
@@ -1130,17 +1213,27 @@ function parseSemester3Layout(
         name: getSubInfo('EST').name,
         type: 'Theory',
         credits: getSubInfo('EST').credits,
-        assessments: [
-          { name: 'CAE-1', max: 20, score: cleanCell(r[103]) },
-          { name: 'CAE-2', max: 20, score: cleanCell(r[104]) },
-          { name: 'Internals', max: 20, score: cleanCell(r[106]) },
-          { name: 'ESE', max: 30, score: cleanCell(r[105]) },
-        ],
-        total: cleanCell(r[107]),
-        maxTotal: getSubInfo('EST').maxMarks || 50,
-        grade: cleanCell(r[108], 'IP'),
-        gradePoint: cleanCell(r[139]),
-        creditPoints: cleanCell(r[152]),
+        assessments: isNewLayout
+          ? [
+              { name: 'CAE-1', max: 40, score: cleanCell(r[106]) },
+              { name: 'CAE-2', max: 40, score: cleanCell(r[107]) },
+              { name: 'TAE-1', max: 10, score: cleanCell(r[109]) },
+              { name: 'TAE-2', max: 5, score: cleanCell(r[110]) },
+              { name: 'TAE-3', max: 5, score: cleanCell(r[111]) },
+              { name: 'Internals', max: 40, score: cleanCell(r[112]) },
+              { name: 'ESE', max: 60, score: cleanCell(r[108]) },
+            ]
+          : [
+              { name: 'CAE-1', max: 40, score: cleanCell(r[103]) },
+              { name: 'CAE-2', max: 40, score: cleanCell(r[104]) },
+              { name: 'Internals', max: 40, score: cleanCell(r[106]) },
+              { name: 'ESE', max: 60, score: cleanCell(r[105]) },
+            ],
+        total: cleanCell(r[isNewLayout ? 113 : 107]),
+        maxTotal: getSubInfo('EST').maxMarks || 100,
+        grade: cleanCell(r[isNewLayout ? 114 : 108], 'IP'),
+        gradePoint: cleanCell(r[gpOE]),
+        creditPoints: cleanCell(r[cpOE]),
       });
     }
 
@@ -1150,17 +1243,27 @@ function parseSemester3Layout(
         name: getSubInfo('EDP').name,
         type: 'Theory',
         credits: getSubInfo('EDP').credits,
-        assessments: [
-          { name: 'CAE-1', max: 20, score: cleanCell(r[109]) },
-          { name: 'CAE-2', max: 20, score: cleanCell(r[110]) },
-          { name: 'Internals', max: 20, score: cleanCell(r[112]) },
-          { name: 'ESE', max: 30, score: cleanCell(r[111]) },
-        ],
-        total: cleanCell(r[113]),
-        maxTotal: getSubInfo('EDP').maxMarks || 50,
-        grade: cleanCell(r[114], 'IP'),
-        gradePoint: cleanCell(r[139]),
-        creditPoints: cleanCell(r[152]),
+        assessments: isNewLayout
+          ? [
+              { name: 'CAE-1', max: 40, score: cleanCell(r[115]) },
+              { name: 'CAE-2', max: 40, score: cleanCell(r[116]) },
+              { name: 'TAE-1', max: 10, score: cleanCell(r[118]) },
+              { name: 'TAE-2', max: 5, score: cleanCell(r[119]) },
+              { name: 'TAE-3', max: 5, score: cleanCell(r[120]) },
+              { name: 'Internals', max: 40, score: cleanCell(r[121]) },
+              { name: 'ESE', max: 60, score: cleanCell(r[117]) },
+            ]
+          : [
+              { name: 'CAE-1', max: 40, score: cleanCell(r[109]) },
+              { name: 'CAE-2', max: 40, score: cleanCell(r[110]) },
+              { name: 'Internals', max: 40, score: cleanCell(r[112]) },
+              { name: 'ESE', max: 60, score: cleanCell(r[111]) },
+            ],
+        total: cleanCell(r[isNewLayout ? 122 : 113]),
+        maxTotal: getSubInfo('EDP').maxMarks || 100,
+        grade: cleanCell(r[isNewLayout ? 123 : 114], 'IP'),
+        gradePoint: cleanCell(r[gpOE]),
+        creditPoints: cleanCell(r[cpOE]),
       });
     }
 
@@ -1170,17 +1273,27 @@ function parseSemester3Layout(
         name: getSubInfo('SPS').name,
         type: 'Theory',
         credits: getSubInfo('SPS').credits,
-        assessments: [
-          { name: 'CAE-1', max: 20, score: cleanCell(r[115]) },
-          { name: 'CAE-2', max: 20, score: cleanCell(r[116]) },
-          { name: 'Internals', max: 20, score: cleanCell(r[118]) },
-          { name: 'ESE', max: 30, score: cleanCell(r[117]) },
-        ],
-        total: cleanCell(r[119]),
-        maxTotal: getSubInfo('SPS').maxMarks || 50,
-        grade: cleanCell(r[120], 'IP'),
-        gradePoint: cleanCell(r[139]),
-        creditPoints: cleanCell(r[152]),
+        assessments: isNewLayout
+          ? [
+              { name: 'CAE-1', max: 40, score: cleanCell(r[124]) },
+              { name: 'CAE-2', max: 40, score: cleanCell(r[125]) },
+              { name: 'TAE-1', max: 10, score: cleanCell(r[127]) },
+              { name: 'TAE-2', max: 5, score: cleanCell(r[128]) },
+              { name: 'TAE-3', max: 5, score: cleanCell(r[129]) },
+              { name: 'Internals', max: 40, score: cleanCell(r[130]) },
+              { name: 'ESE', max: 60, score: cleanCell(r[126]) },
+            ]
+          : [
+              { name: 'CAE-1', max: 40, score: cleanCell(r[115]) },
+              { name: 'CAE-2', max: 40, score: cleanCell(r[116]) },
+              { name: 'Internals', max: 40, score: cleanCell(r[118]) },
+              { name: 'ESE', max: 60, score: cleanCell(r[117]) },
+            ],
+        total: cleanCell(r[isNewLayout ? 131 : 119]),
+        maxTotal: getSubInfo('SPS').maxMarks || 100,
+        grade: cleanCell(r[isNewLayout ? 132 : 120], 'IP'),
+        gradePoint: cleanCell(r[gpOE]),
+        creditPoints: cleanCell(r[cpOE]),
       });
     }
 
@@ -1189,10 +1302,16 @@ function parseSemester3Layout(
     const hasAnyOe = hasDcd || hasEst || hasEdp || hasSps;
     if (!hasAnyOe) {
       const liveNptel = nptelMap?.get(usn.toUpperCase());
-      const nptelScoreRaw = (liveNptel?.marks && liveNptel.marks !== '-' ? liveNptel.marks : cleanCell(r[126]));
+      const nptelScoreRaw = liveNptel?.marks && liveNptel.marks !== '-'
+        ? liveNptel.marks
+        : cleanCell(r[nptelCols.marks]);
       const hasNptelScore = nptelScoreRaw !== '-' && nptelScoreRaw !== '' && nptelScoreRaw !== '0';
-      const nptelGradeRaw = (liveNptel?.grade && liveNptel.grade !== '-' ? liveNptel.grade : cleanCell(r[127]));
-      const nptelGrade = (nptelGradeRaw && nptelGradeRaw !== '-' && nptelGradeRaw !== 'IP') ? nptelGradeRaw : 'PASS';
+      const nptelGradeRaw = liveNptel?.grade && liveNptel.grade !== '-'
+        ? liveNptel.grade
+        : cleanCell(r[nptelCols.grade]);
+      const nptelGrade = nptelGradeRaw && nptelGradeRaw !== '-' && nptelGradeRaw !== 'IP'
+        ? nptelGradeRaw
+        : 'PASS';
 
       subjects.push({
         code: 'NPTEL',
@@ -1209,16 +1328,22 @@ function parseSemester3Layout(
         total: hasNptelScore ? nptelScoreRaw : '-',
         maxTotal: 100,
         grade: nptelGrade,
-        gradePoint: cleanCell(r[141]),
-        creditPoints: cleanCell(r[154]),
+        gradePoint: cleanCell(r[gpNPTEL]),
+        creditPoints: cleanCell(r[cpNPTEL]),
       });
     }
 
     // 5. INC (Incentives - 12th in required order: DMGT, CAO, DSA, DSAL, FCC, ED, ES, CEP/FP, MDM, OE, NPTEL, INC)
     // By default, everyone is PASS in INC
-    const rawIncGrade = cleanCell(r[144] || r[128]);
-    const incGrade = (rawIncGrade && rawIncGrade !== '-' && rawIncGrade !== '0' && rawIncGrade !== 'F') ? rawIncGrade : 'PASS';
-    const rawIncScore = cleanCell(r[145] || r[129]);
+    const rawIncGrade = isNewLayout
+      ? cleanCell(r[incCols.grade])
+      : cleanCell(r[144] || r[128]);
+    const incGrade = rawIncGrade && rawIncGrade !== '-' && rawIncGrade !== '0' && rawIncGrade !== 'F'
+      ? rawIncGrade
+      : 'PASS';
+    const rawIncScore = isNewLayout
+      ? cleanCell(r[incCols.score])
+      : cleanCell(r[145] || r[129]);
 
     subjects.push({
       code: 'INC',
@@ -1229,8 +1354,8 @@ function parseSemester3Layout(
       total: rawIncScore !== '-' ? rawIncScore : '-',
       maxTotal: 10,
       grade: incGrade,
-      gradePoint: cleanCell(r[156] || r[142]),
-      creditPoints: cleanCell(r[167] || r[155]),
+      gradePoint: cleanCell(r[gpINC]),
+      creditPoints: cleanCell(r[cpINC]),
     });
 
     // Explicitly guarantee required syllabus order:
@@ -1264,11 +1389,15 @@ function parseSemester3Layout(
     const academicCredits = subjects
       .filter((sub) => sub.code !== 'INC' && sub.code !== 'INCENTIVES')
       .reduce((acc, sub) => acc + (parseFloat(sub.credits || '0') || 0), 0);
-    const totalCredits = String(academicCredits >= 24 ? academicCredits : (academicCredits >= 21 ? academicCredits : 24));
+    const calculatedCredits = String(academicCredits >= 24 ? academicCredits : (academicCredits >= 21 ? academicCredits : 24));
+    const sheetCredits = cleanCell(r[totalCreditsCol]);
+    const totalCredits = sheetCredits !== '-' && !isNaN(parseFloat(sheetCredits)) && parseFloat(sheetCredits) > 0
+      ? sheetCredits
+      : calculatedCredits;
 
-    const rawGradePoints = cleanCell(r[156]);
-    const rawSgpa = cleanCell(r[157]);
-    const rawStatus = cleanCell(r[158]);
+    const rawGradePoints = cleanCell(r[isNewLayout ? 168 : 156]);
+    const rawSgpa = cleanCell(r[sgpaCol]);
+    const rawStatus = cleanCell(r[statusCol]);
 
     const totalGradePoints = rawGradePoints !== '-' ? rawGradePoints : '-';
     const sgpa = rawSgpa !== '-' ? rawSgpa : 'In Progress';

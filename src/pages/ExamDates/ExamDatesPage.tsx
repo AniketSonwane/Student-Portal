@@ -96,7 +96,7 @@ export const ExamDatesPage: React.FC = () => {
         setError(res.error || 'Failed to load examination timetable.');
       }
     } catch (err: any) {
-      setError(err?.message || 'Error communicating with Google Sheets.');
+      setError(err?.message || 'Error loading examination timetable.');
     } finally {
       setIsLoading(false);
     }
@@ -323,7 +323,7 @@ export const ExamDatesPage: React.FC = () => {
         {/* Loading State */}
         {isLoading ? (
           <div className="py-20 flex justify-center">
-            <LoadingState message="Fetching examination timetable from Google Sheets..." />
+            <LoadingState message="Loading examination timetable..." />
           </div>
         ) : (
           <div className="space-y-4 sm:space-y-6">

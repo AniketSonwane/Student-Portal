@@ -27,7 +27,8 @@ export const cleanupUnnecessaryStorage = (): void => {
         key === 'student_portal_cached_students' ||
         key.includes('timetable') ||
         key.includes('exam_date') ||
-        key.includes('custom_exam')
+        key.includes('custom_exam') ||
+        key.startsWith('student_portal_marks')
       ) {
         keysToRemove.push(key);
       }
@@ -46,7 +47,8 @@ export const cleanupUnnecessaryStorage = (): void => {
             sKey &&
             (sKey.includes('timetable') ||
               sKey.includes('exam_date') ||
-              sKey.includes('custom_exam'))
+              sKey.includes('custom_exam') ||
+              sKey.startsWith('student_portal_marks'))
           ) {
             sessionKeys.push(sKey);
           }

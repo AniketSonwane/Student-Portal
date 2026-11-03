@@ -27,7 +27,7 @@ export const StatementModal: React.FC<StatementModalProps> = ({
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title="Official Semester Grade Statement"
+        title="Semester Grade Statement"
         maxWidth="4xl"
       >
         <div className="space-y-6 text-slate-800 dark:text-slate-100">
@@ -53,7 +53,7 @@ export const StatementModal: React.FC<StatementModalProps> = ({
                 Student Academic Grade Statement
               </h2>
               <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Synchronized with Master-Sheet Examination Records
+                Academic Examination Records
               </p>
             </div>
 
@@ -231,7 +231,7 @@ export const StatementModal: React.FC<StatementModalProps> = ({
 
             {/* Authenticity & Verification Signature Row */}
             <div className="pt-3.5 sm:pt-4 border-t border-slate-200 dark:border-[#202028] flex flex-col sm:flex-row items-center justify-between text-[10px] sm:text-[11px] text-slate-400 gap-1 text-center sm:text-left">
-              <span>Verified System Statement • Extracted from Google Sheets Master Record</span>
+              <span>Verified Institutional Statement • Academic Record</span>
               <span>Generated on {new Date().toLocaleDateString()}</span>
             </div>
           </div>

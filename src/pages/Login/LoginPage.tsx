@@ -38,10 +38,16 @@ export const LoginPage: React.FC = () => {
   const gsiButtonRef = useRef<HTMLDivElement>(null);
   const [hasGsiButton, setHasGsiButton] = useState(false);
 
-  // Preload lock status and warm up student directory in background on mount
+  // Preload lock status (forced refresh) and warm up student directory in background on mount
   useEffect(() => {
-    checkPortalLock(false);
+    checkPortalLock(true);
     profileService.fetchAllStudents(false);
+
+    // Poll live lock status every 3 seconds while on login screen so maintenance activates instantly
+    const interval = setInterval(() => {
+      checkPortalLock(true);
+    }, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   // Initialize Google Identity Services if client ID is configured
@@ -223,7 +229,7 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-transparent text-slate-900 dark:text-slate-100 flex flex-col justify-between p-3 sm:p-6 pb-safe transition-colors duration-200">
+    <div className="flex-1 flex flex-col justify-between p-2 sm:p-4 bg-transparent text-slate-900 dark:text-slate-100 transition-colors duration-200">
       {/* Top Header */}
       <header className="w-full max-w-5xl mx-auto flex items-center justify-between py-2 px-1">
         <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
@@ -241,14 +247,14 @@ export const LoginPage: React.FC = () => {
       </header>
 
       {/* Main Login Card Section */}
-      <main className="flex-1 flex items-center justify-center py-4 sm:py-10">
+      <main className="flex-1 flex items-center justify-center py-2 sm:py-4">
         <div className="w-full max-w-md">
-          <div className="bg-white/95 dark:bg-[#0A0A0D]/95 backdrop-blur-md border border-slate-200/90 dark:border-[#222228] rounded-2xl shadow-card dark:shadow-card-dark p-6 sm:p-8 transition-all duration-200 relative overflow-hidden">
+          <div className="bg-white/95 dark:bg-[#0A0A0D]/95 backdrop-blur-md border border-slate-200/90 dark:border-[#222228] rounded-2xl shadow-card dark:shadow-card-dark p-5 sm:p-6 transition-all duration-200 relative overflow-hidden">
             {/* Highlight gradient bar at top of card */}
             <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-[#8048A8] to-[#F8D299] opacity-75" />
 
             {/* Logo and Welcome header */}
-            <div className="text-center mb-6 sm:mb-7">
+            <div className="text-center mb-4 sm:mb-5">
               <div className="inline-flex w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-slate-900 dark:bg-[#141418] border border-slate-800 dark:border-[#2A2A32] text-[#F8D299] items-center justify-center shadow-md mb-3.5 relative group">
                 <GraduationCap className="w-6 h-6 sm:w-7 sm:h-7" />
                 <span className="absolute -top-1 -right-1 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-[#8048A8] border-2 border-white dark:border-[#0A0A0D]" />
@@ -277,11 +283,11 @@ export const LoginPage: React.FC = () => {
                         Locked
                       </span>
                     </div>
-                    <p className="text-slate-700 dark:text-slate-300 text-xs leading-relaxed break-words mb-2">
+                    <p className="text-slate-700 dark:text-slate-300 text-xs leading-relaxed break-words mb-1.5">
                       {lockReason || 'The student portal is temporarily locked by the administrator for maintenance.'}
                     </p>
                     <p className="text-[11px] text-rose-700 dark:text-rose-400 font-medium">
-                      Student logins are currently paused. Administrators can sign in below to unlock.
+                      Student logins are currently paused.
                     </p>
                   </div>
                 </div>
@@ -289,7 +295,7 @@ export const LoginPage: React.FC = () => {
             )}
 
             {/* Error Notification */}
-            {(localError || (error && !error.toLowerCase().includes('session'))) && (
+            {(!isPortalLocked && (localError || (error && !error.toLowerCase().includes('session')))) && (
               <div
                 className={`mb-5 p-3.5 sm:p-4 rounded-xl border text-xs transition-all animate-shake ${
                   (localError || error || '').toLowerCase().includes('lock') ||
@@ -348,7 +354,7 @@ export const LoginPage: React.FC = () => {
                   disabled={isLoading || submitting}
                   className="w-full min-h-[48px] py-3 px-4 rounded-xl border border-slate-300 dark:border-[#2A2A32] bg-white dark:bg-[#121216] hover:bg-slate-50 dark:hover:bg-[#18181F] active:scale-[0.99] text-slate-800 dark:text-slate-100 font-medium text-sm flex items-center justify-center gap-3 shadow-sm hover:shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#8048A8] disabled:opacity-60 disabled:cursor-not-allowed group touch-manipulation"
                 >
-                  {/* Official Google SVG Logo */}
+                  {/* Google SVG Logo */}
                   <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
                     <path
                       fill="#4285F4"
@@ -376,7 +382,7 @@ export const LoginPage: React.FC = () => {
             </div>
 
             {/* Terms and Conditions Link */}
-            <div className="mt-6 text-center">
+            <div className="mt-4 text-center">
               <Link
                 to={ROUTES.TERMS}
                 className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white underline transition-colors py-1 touch-manipulation"

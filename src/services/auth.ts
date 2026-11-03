@@ -32,18 +32,28 @@ export const authService = {
   },
 
   /**
-   * Check if current session has expired (after 30 minutes of login)
+   * Check if current session has expired (after 30 minutes of login).
+   * Admin sessions never expire.
    */
   isSessionExpired(): boolean {
+    // Admin sessions do not expire
+    if (adminSheetService.isAdminAuthenticated()) return false;
+    if (localStorage.getItem('student_portal_admin_inspecting') === 'true') return false;
+
     const loginTime = this.getLoginTime();
     if (!loginTime) return true;
     return Date.now() - loginTime >= SESSION_DURATION_MS;
   },
 
   /**
-   * Get remaining session time in milliseconds
+   * Get remaining session time in milliseconds.
+   * Returns Infinity for admin sessions (no expiry).
    */
   getRemainingSessionTime(): number {
+    // Admin sessions never expire
+    if (adminSheetService.isAdminAuthenticated()) return Infinity;
+    if (localStorage.getItem('student_portal_admin_inspecting') === 'true') return Infinity;
+
     const loginTime = this.getLoginTime();
     if (!loginTime) return 0;
     return Math.max(0, SESSION_DURATION_MS - (Date.now() - loginTime));
@@ -99,7 +109,7 @@ export const authService = {
         success: false,
         error: {
           code: 'INVALID_CREDENTIALS',
-          message: 'Unable to extract email from Google Sign-In. Please sign in using your official college email ID (@sbjit.edu.in).',
+          message: 'Unable to extract email from Google Sign-In. Please sign in using your college email ID (@sbjit.edu.in).',
         },
       };
     }
@@ -139,14 +149,14 @@ export const authService = {
         success: false,
         error: {
           code: 'INVALID_INPUT',
-          message: 'Please enter your official college email ID (@sbjit.edu.in).',
+          message: 'Please enter your college email ID (@sbjit.edu.in).',
         },
       };
     }
 
-    // Fetch live settings and student directory in parallel (fast)
+    // Fetch live settings (force refresh to guarantee instant lock check) and student directory in parallel
     const [settings, sheetRes] = await Promise.all([
-      adminSheetService.fetchLiveSettings(false),
+      adminSheetService.fetchLiveSettings(true),
       profileService.fetchAllStudents(false),
     ]);
 
@@ -236,7 +246,7 @@ export const authService = {
         success: false,
         error: {
           code: 'INVALID_INPUT',
-          message: 'Please enter your official college email ID (@sbjit.edu.in).',
+          message: 'Please enter your college email ID (@sbjit.edu.in).',
         },
       };
     }

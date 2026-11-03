@@ -13,51 +13,36 @@ export interface GlobalCourseSearchResult {
   isCompleted: boolean;
 }
 
-// In-memory cache for loaded semester sheets (populated live from Google Sheets)
-const semesterCache = new Map<number, StudentSemesterMarks[]>();
-
 export const marksService = {
   /**
-   * Fetch all student marks from a semester's Google Sheet Master-Sheet
+   * Fetch all student marks from a semester's Google Sheet Master-Sheet (always live, no caching)
    */
   async fetchSemesterMarks(
     semester: number
   ): Promise<{ success: boolean; data?: StudentSemesterMarks[]; error?: string }> {
-    // 1. Check in-memory cache first
-    if (semesterCache.has(semester)) {
-      return { success: true, data: semesterCache.get(semester)! };
-    }
-
-    // 2. Check session storage cache
-    const sessionKey = `student_portal_marks_sem_${semester}`;
-    try {
-      const stored = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(sessionKey) : null;
-      if (stored) {
-        const parsedStored: StudentSemesterMarks[] = JSON.parse(stored);
-        if (parsedStored && parsedStored.length > 0) {
-          semesterCache.set(semester, parsedStored);
-          return { success: true, data: parsedStored };
-        }
-      }
-    } catch {}
-
     const config = SEMESTER_SHEETS_CONFIG[semester];
     if (!config || !config.spreadsheetId) {
       return {
         success: false,
-        error: `Semester ${semester} Google Sheet has not been connected yet.`,
+        error: `Semester ${semester} marks record has not been connected yet.`,
       };
     }
 
     const sheetName = config.sheetName || 'Master-Sheet';
     const spreadsheetId = config.spreadsheetId;
 
-    // Direct Google Sheets first for instant retrieval, then Netlify fallback
-    const endpoints = [
-      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
-      `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(sheetName)}`,
-      `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
-    ];
+    // Use Vite proxy first in development (avoids CORS), then direct Google Sheets, then Netlify fallback
+    const isDev = import.meta.env.DEV;
+    const endpoints = isDev
+      ? [
+          `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+        ]
+      : [
+          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+          `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(sheetName)}`,
+          `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+        ];
 
     let csvText: string | null = null;
     let lastError: string = '';
@@ -80,7 +65,7 @@ export const marksService = {
     if (!csvText) {
       return {
         success: false,
-        error: `Unable to fetch Semester ${semester} Master-Sheet from Google Sheets. ${lastError}`.trim(),
+        error: `Unable to load Semester ${semester} examination records. ${lastError}`.trim(),
       };
     }
 
@@ -95,10 +80,15 @@ export const marksService = {
           : ['sem3-details', 'SEM3-Details', 'Sem3-Details', 'Sheet8'];
 
       for (const dSheetName of detailsSheetCandidates) {
-        const detailsEndpoints = [
-          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
-          `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(dSheetName)}`,
-        ];
+        const detailsEndpoints = isDev
+          ? [
+              `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
+              `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
+            ]
+          : [
+              `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
+              `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(dSheetName)}`,
+            ];
         if (semester === 3) {
           const sem3DetailsGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_DETAILS_GID as string) || '2700910';
           detailsEndpoints.push(
@@ -132,11 +122,16 @@ export const marksService = {
     let nptelMap: Map<string, { marks?: string; grade?: string }> | undefined = undefined;
     if (semester === 3) {
       const sem3NptelGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_NPTEL_GID as string) || '1657515727';
-      const nptelEndpoints = [
-        `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
-        `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=NPTEL`,
-        `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3NptelGid)}`,
-      ];
+      const nptelEndpoints = isDev
+        ? [
+            `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
+            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
+          ]
+        : [
+            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
+            `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=NPTEL`,
+            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3NptelGid)}`,
+          ];
       for (const nUrl of nptelEndpoints) {
         try {
           const controller = new AbortController();
@@ -161,25 +156,21 @@ export const marksService = {
       if (parsed.length === 0) {
         return {
           success: false,
-          error: `No valid student records found in Semester ${semester} Master-Sheet.`,
+          error: `No valid student records found in Semester ${semester} records.`,
         };
       }
 
-      semesterCache.set(semester, parsed);
-      try {
-        sessionStorage.setItem(sessionKey, JSON.stringify(parsed));
-      } catch {}
       return { success: true, data: parsed };
     } catch (parseErr: any) {
       return {
         success: false,
-        error: `Failed to parse Semester ${semester} Master-Sheet: ${parseErr?.message || 'Invalid format'}`,
+        error: `Failed to load Semester ${semester} records: ${parseErr?.message || 'Invalid format'}`,
       };
     }
   },
 
   /**
-   * Retrieve official semester marks for a student by USN and semester
+   * Retrieve semester marks for a student by USN and semester
    */
   async getStudentMarks(
     usn: string,
@@ -201,7 +192,7 @@ export const marksService = {
     if (!student) {
       return {
         success: false,
-        error: `No marks record found for USN: ${usn} in Semester ${semester} Master-Sheet.`,
+        error: `No marks record found for USN: ${usn} in Semester ${semester}.`,
       };
     }
 
@@ -265,20 +256,10 @@ export const marksService = {
   },
 
   /**
-   * Get all marks for student selection/inspection
+   * Get all marks for student selection/inspection (fetches live from Google Sheets)
    */
-  getAllMarks(semester: number = 1): StudentSemesterMarks[] {
-    return semesterCache.get(semester) || [];
-  },
-
-  /**
-   * Clear cache (useful when user updates Google Sheet links)
-   */
-  clearCache(semester?: number) {
-    if (semester) {
-      semesterCache.delete(semester);
-    } else {
-      semesterCache.clear();
-    }
+  async getAllMarks(semester: number = 1): Promise<StudentSemesterMarks[]> {
+    const res = await this.fetchSemesterMarks(semester);
+    return res.success && res.data ? res.data : [];
   },
 };
