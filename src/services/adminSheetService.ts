@@ -1,12 +1,14 @@
-import { LoginLog, ChangeRequest, PortalSettings, AdminStats } from '../types/admin';
+import { LoginLog, ChangeRequest, PortalSettings, AdminStats, BlockedUser } from '../types/admin';
 import { profileService } from './profile';
 import { cleanupUnnecessaryStorage } from '../utils/cleanStorage';
 import { TIMETABLE_SPREADSHEET_ID, EXAM_DATES_SPREADSHEET_ID, ADMIN_SPREADSHEET_ID } from '../config/sheetsConfig';
+import { parseCSV } from './sheetParser';
 
 const STORAGE_KEYS = {
   LOGS: 'student_portal_admin_logs',
   REQUESTS: 'student_portal_admin_change_requests',
   SETTINGS: 'student_portal_admin_settings',
+  BLOCKED_USERS: 'student_portal_admin_blocked_users',
   ADMIN_AUTH: 'student_portal_admin_authenticated',
   SHEET_URL: 'student_portal_admin_sheet_url',
 };
@@ -103,14 +105,30 @@ export const adminSheetService = {
   },
 
   /**
+   * Get primary administrator email securely configured in environment
+   */
+  getPrimaryAdminEmail(): string {
+    return ((import.meta.env.VITE_ADMIN_EMAIL as string) || '').toLowerCase().trim();
+  },
+
+  /**
+   * Check if an email matches the primary administrator configured in environment
+   */
+  isPrimaryAdminEmail(email: string): boolean {
+    const primary = this.getPrimaryAdminEmail();
+    if (!primary) return false;
+    return (email || '').toLowerCase().trim() === primary;
+  },
+
+  /**
    * Check if an email is authorized to access the Admin Portal
    */
   isAuthorizedAdminEmail(email: string): boolean {
     const raw = (email || '').toLowerCase().trim();
     if (!raw) return false;
     const allowed: string[] = [];
-    const envAdmin = (import.meta.env.VITE_ADMIN_EMAIL as string) || '';
-    if (envAdmin) allowed.push(envAdmin.toLowerCase().trim());
+    const envAdmin = this.getPrimaryAdminEmail();
+    if (envAdmin) allowed.push(envAdmin);
     const envAdminList = (import.meta.env.VITE_ADMIN_EMAILS as string) || '';
     if (envAdminList) {
       envAdminList.split(',').forEach((e) => allowed.push(e.trim().toLowerCase()));
@@ -121,6 +139,9 @@ export const adminSheetService = {
 
 
   _cachedLogs: [] as LoginLog[],
+  _cachedBlockedUsers: null as BlockedUser[] | null,
+  _lastBlockedUsersFetch: 0,
+  _deletedRequestIds: new Set<string>(),
 
   /**
    * Retrieve all Login Logs (in-memory, direct synced with Google Sheet, no localStorage)
@@ -134,7 +155,173 @@ export const adminSheetService = {
   },
 
   /**
-   * Fetch live data directly from Google Apps Script Web App
+   * Fast-path: Fetch live audit logs, change requests, and settings directly from Google Sheet via GViz CSV
+   */
+  async fetchFromGviz(): Promise<{
+    success: boolean;
+    logs: LoginLog[];
+    requests: ChangeRequest[];
+    settings: PortalSettings;
+  } | null> {
+    const adminSheetId = ADMIN_SPREADSHEET_ID;
+    if (!adminSheetId) return null;
+
+    try {
+      const isDev = import.meta.env.DEV;
+      const getGvizUrl = (sheet: string) => {
+        const extra = sheet === 'Settings' ? '&headers=1' : '';
+        return isDev
+          ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}${extra}`
+          : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}${extra}`;
+      };
+
+      const [logRes, reqRes, setRes, blockRes] = await Promise.all([
+        fetch(getGvizUrl('Logins')).catch(() => null),
+        fetch(getGvizUrl('ChangeRequests')).catch(() => null),
+        fetch(getGvizUrl('Settings')).catch(() => null),
+        fetch(getGvizUrl('BlockedUsers')).catch(() => null),
+      ]);
+
+      if (!logRes || !logRes.ok) return null;
+
+      const logText = await logRes.text();
+      const logRows = parseCSV(logText);
+      let parsedLogs: LoginLog[] = [];
+      if (logRows.length > 1) {
+        for (let i = 1; i < logRows.length; i++) {
+          const row = logRows[i];
+          if (!row || !row[0]) continue;
+          const rawStatus = String(row[5] || '').toUpperCase();
+          parsedLogs.push({
+            id: String(row[0]),
+            timestamp: row[1] ? new Date(row[1]).toISOString() : new Date().toISOString(),
+            student_name: String(row[2] || 'Unknown User'),
+            usn: String(row[3] || 'N/A'),
+            email: String(row[4] || ''),
+            status:
+              rawStatus === 'DENIED' || rawStatus === 'BLOCKED'
+                ? (rawStatus as any)
+                : 'SUCCESS',
+            device: String(row[6] || 'Web Browser'),
+            reason: String(row[7] || ''),
+          });
+        }
+        parsedLogs.reverse();
+      }
+
+      parsedLogs = parsedLogs.filter(
+        (l) =>
+          !l.id.startsWith('log-10') &&
+          !l.id.startsWith('test-') &&
+          !this.isAuthorizedAdminEmail(l.email) &&
+          !l.reason?.includes('Admin')
+      );
+
+      this._cachedLogs = parsedLogs;
+      localStorage.removeItem(STORAGE_KEYS.LOGS);
+
+      // Parse blocked users
+      if (blockRes && blockRes.ok) {
+        try {
+          const blockText = await blockRes.text();
+          const blockRows = parseCSV(blockText);
+          const parsedBlocked: BlockedUser[] = [];
+          if (blockRows.length > 1) {
+            for (let i = 1; i < blockRows.length; i++) {
+              const row = blockRows[i];
+              if (!row || !row[1]) continue;
+              parsedBlocked.push({
+                timestamp: row[0] ? new Date(row[0]).toISOString() : new Date().toISOString(),
+                userId: String(row[1]).trim(),
+                studentName: row[2] ? String(row[2]).trim() : undefined,
+                reason: row[3] ? String(row[3]).trim() : undefined,
+                blockedBy: row[4] ? String(row[4]).trim() : undefined,
+              });
+            }
+            parsedBlocked.reverse();
+            this.setBlockedUsers(parsedBlocked);
+          }
+        } catch (bErr) {
+          console.warn('Could not parse BlockedUsers from GViz:', bErr);
+        }
+      }
+
+      // Parse change requests
+      let parsedRequests: ChangeRequest[] = [];
+      if (reqRes && reqRes.ok) {
+        const reqText = await reqRes.text();
+        const reqRows = parseCSV(reqText);
+        if (reqRows.length > 1) {
+          for (let i = 1; i < reqRows.length; i++) {
+            const row = reqRows[i];
+            if (!row || !row[0]) continue;
+            parsedRequests.push({
+              id: String(row[0]),
+              submitted_at: row[1] ? new Date(row[1]).toISOString() : new Date().toISOString(),
+              student_usn: String(row[2] || ''),
+              student_name: String(row[3] || ''),
+              field_name: String(row[4] || ''),
+              old_value: String(row[5] || ''),
+              new_value: String(row[6] || ''),
+              reason: String(row[7] || ''),
+              status: (String(row[8] || 'PENDING').toUpperCase() as any),
+            });
+          }
+          parsedRequests.reverse();
+        }
+      }
+
+      parsedRequests = parsedRequests.filter(
+        (r) => !r.id.startsWith('req-0') && !this._deletedRequestIds.has(r.id)
+      );
+      localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(parsedRequests));
+
+      // Parse settings
+      const currentSettings = this.getPortalSettings();
+      const nowTime = Date.now();
+      const isRecentlySet = this._lastSettingsFetch && this._lastSettingsFetch > nowTime;
+      if (!isRecentlySet && setRes && setRes.ok) {
+        const setText = await setRes.text();
+        const setLines = setText.split(/\r?\n/);
+        for (const line of setLines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const m = trimmed.match(/^"([^"]+)"\s*,\s*"((?:[^"]|"")*)"/) ||
+                    trimmed.match(/^"([^"]+)"\s*,\s*([^,]*)/) ||
+                    trimmed.match(/^([^,]+)\s*,\s*"((?:[^"]|"")*)"/) ||
+                    trimmed.match(/^([^,]+)\s*,\s*([^,]*)/);
+          if (m) {
+            const key = m[1].trim().toLowerCase();
+            const val = m[2].replace(/""/g, '"').trim();
+            if (key === 'is_locked') {
+              currentSettings.is_locked = val.toUpperCase() === 'TRUE';
+            }
+            if (key === 'lock_reason' && val) {
+              currentSettings.lock_reason = val;
+            }
+          }
+        }
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(currentSettings));
+        this._lastSettingsFetch = Date.now();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('portal_settings_changed', { detail: currentSettings }));
+        }
+      }
+
+      return {
+        success: true,
+        logs: parsedLogs,
+        requests: parsedRequests,
+        settings: currentSettings,
+      };
+    } catch (err) {
+      console.warn('Direct GViz fetch error in adminSheetService:', err);
+      return null;
+    }
+  },
+
+  /**
+   * Fetch live data directly from Google Apps Script Web App (with GViz CSV fast-path & automatic failover)
    */
   async fetchLiveFromSheet(): Promise<{
     success: boolean;
@@ -143,8 +330,21 @@ export const adminSheetService = {
     settings: PortalSettings;
     error?: string;
   }> {
+    // 1. Try blazing-fast direct GViz CSV fetch first (~150ms)
+    try {
+      const gvizResult = await this.fetchFromGviz();
+      if (gvizResult && gvizResult.success && gvizResult.logs.length > 0) {
+        return gvizResult;
+      }
+    } catch (e) {
+      console.warn('GViz fast-path fetch had an issue, checking Apps Script Web App:', e);
+    }
+
     const scriptUrl = this.getScriptUrl();
     if (!scriptUrl) {
+      const gvizFallback = await this.fetchFromGviz();
+      if (gvizFallback) return gvizFallback;
+
       return {
         success: false,
         logs: this.getLogs(),
@@ -224,8 +424,10 @@ export const adminSheetService = {
         parsedRequests.reverse();
       }
 
-      // Always store sheet requests (and filter any demo requests)
-      parsedRequests = parsedRequests.filter((r) => !r.id.startsWith('req-0'));
+      // Always store sheet requests (and filter any demo requests and deleted requests)
+      parsedRequests = parsedRequests.filter(
+        (r) => !r.id.startsWith('req-0') && !this._deletedRequestIds.has(r.id)
+      );
       localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(parsedRequests));
 
       // 3. Parse Settings from sheet
@@ -256,7 +458,11 @@ export const adminSheetService = {
         settings: currentSettings,
       };
     } catch (err: any) {
-      console.warn('Live Google Sheet fetch failed, falling back to local cache:', err);
+      console.warn('Apps Script Web App fetch failed, falling back to direct GViz CSV:', err);
+      const gvizFallback = await this.fetchFromGviz();
+      if (gvizFallback) {
+        return gvizFallback;
+      }
       return {
         success: false,
         logs: this.getLogs(),
@@ -335,6 +541,274 @@ export const adminSheetService = {
   },
 
   /**
+   * Get all Blocked Users from memory or localStorage
+   */
+  getBlockedUsers(): BlockedUser[] {
+    if (this._cachedBlockedUsers) return this._cachedBlockedUsers;
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.BLOCKED_USERS);
+      if (stored) {
+        this._cachedBlockedUsers = JSON.parse(stored);
+        return this._cachedBlockedUsers || [];
+      }
+    } catch (e) {
+      console.warn('Error reading blocked users from localStorage:', e);
+    }
+    return [];
+  },
+
+  /**
+   * Save Blocked Users to cache and localStorage
+   */
+  setBlockedUsers(list: BlockedUser[]): void {
+    this._cachedBlockedUsers = list;
+    this._lastBlockedUsersFetch = Date.now();
+    try {
+      localStorage.setItem(STORAGE_KEYS.BLOCKED_USERS, JSON.stringify(list));
+    } catch (e) {
+      console.warn('Error saving blocked users to localStorage:', e);
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('portal_blocked_users_changed', { detail: list }));
+    }
+  },
+
+  /**
+   * Check if a specific identifier matches any blocked user
+   */
+  isUserBlocked(identifier: string): boolean {
+    if (!identifier) return false;
+    const clean = identifier.trim().toLowerCase();
+    const blockedList = this.getBlockedUsers();
+    return blockedList.some((b) => (b.userId || '').trim().toLowerCase() === clean);
+  },
+
+  /**
+   * Check if student identifiers (student_id, usn, email, etc.) match any blocked user
+   */
+  checkIfStudentIsBlocked(identifiers: (string | undefined | null)[]): BlockedUser | null {
+    const cleanList = identifiers
+      .filter((id): id is string => Boolean(id && typeof id === 'string'))
+      .map((id) => id.trim().toLowerCase());
+    if (cleanList.length === 0) return null;
+
+    const blockedList = this.getBlockedUsers();
+    for (const b of blockedList) {
+      const bId = (b.userId || '').trim().toLowerCase();
+      if (!bId) continue;
+      if (cleanList.includes(bId)) {
+        return b;
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Fetch live blocked users list with GViz fast-path & Apps Script failover
+   */
+  async fetchBlockedUsers(force = false): Promise<BlockedUser[]> {
+    const now = Date.now();
+    if (!force && this._cachedBlockedUsers && now - this._lastBlockedUsersFetch < 8000) {
+      return this._cachedBlockedUsers;
+    }
+
+    const adminSheetId = ADMIN_SPREADSHEET_ID;
+    const isDev = import.meta.env.DEV;
+
+    // Fast-path: Direct GViz CSV fetch for 'BlockedUsers' tab
+    if (adminSheetId) {
+      try {
+        const gvizUrl = isDev
+          ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('BlockedUsers')}&headers=1`
+          : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('BlockedUsers')}&headers=1`;
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 2500);
+        const res = await fetch(gvizUrl, { signal: ctrl.signal });
+        clearTimeout(tid);
+
+        if (res.ok) {
+          const text = await res.text();
+          if (text) {
+            const rows = parseCSV(text);
+            const parsed: BlockedUser[] = [];
+            const startIndex = rows.length > 0 && (rows[0][1]?.toLowerCase().includes('user') || rows[0][0]?.toLowerCase().includes('time')) ? 1 : 0;
+            for (let i = startIndex; i < rows.length; i++) {
+              const r = rows[i];
+              if (!r || !r[1]) continue;
+              parsed.push({
+                timestamp: r[0] ? new Date(r[0]).toISOString() : new Date().toISOString(),
+                userId: String(r[1]).trim(),
+                studentName: r[2] ? String(r[2]).trim() : undefined,
+                reason: r[3] ? String(r[3]).trim() : undefined,
+                blockedBy: r[4] ? String(r[4]).trim() : undefined,
+              });
+            }
+            parsed.reverse();
+            this.setBlockedUsers(parsed);
+            return parsed;
+          }
+        }
+      } catch (gErr) {
+        console.warn('GViz blocked users fetch error:', gErr);
+      }
+    }
+
+    // Apps Script failover
+    const scriptUrl = this.getScriptUrl();
+    if (scriptUrl) {
+      try {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 3500);
+        const url = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}action=GET_BLOCKED_USERS&spreadsheetId=${adminSheetId}`;
+        const response = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(tid);
+
+        if (response.ok) {
+          const json = await response.json();
+          if (json.success && Array.isArray(json.blocked)) {
+            const rawRows = json.blocked;
+            const parsed: BlockedUser[] = [];
+            const startIndex = rawRows.length > 0 && String(rawRows[0][1]).toLowerCase().includes('user') ? 1 : 0;
+            for (let i = startIndex; i < rawRows.length; i++) {
+              const r = rawRows[i];
+              if (!r || !r[1]) continue;
+              parsed.push({
+                timestamp: r[0] ? new Date(r[0]).toISOString() : new Date().toISOString(),
+                userId: String(r[1]).trim(),
+                studentName: r[2] ? String(r[2]).trim() : undefined,
+                reason: r[3] ? String(r[3]).trim() : undefined,
+                blockedBy: r[4] ? String(r[4]).trim() : undefined,
+              });
+            }
+            parsed.reverse();
+            this.setBlockedUsers(parsed);
+            return parsed;
+          }
+        }
+      } catch (err) {
+        console.warn('Apps Script fetchBlockedUsers error:', err);
+      }
+    }
+
+    return this.getBlockedUsers();
+  },
+
+  /**
+   * Block a User ID (stored in 'BlockedUsers' tab of Admin Google Sheet)
+   */
+  async blockUser(data: {
+    userId: string;
+    studentName?: string;
+    reason?: string;
+    blockedBy?: string;
+  }): Promise<{ success: boolean; data?: BlockedUser; error?: string }> {
+    const cleanId = (data.userId || '').trim();
+    if (!cleanId) {
+      return { success: false, error: 'User ID is required.' };
+    }
+
+    const newBlocked: BlockedUser = {
+      timestamp: new Date().toISOString(),
+      userId: cleanId,
+      studentName: data.studentName?.trim() || undefined,
+      reason: data.reason?.trim() || 'Blocked by administrator',
+      blockedBy: data.blockedBy?.trim() || this.getAdminUser()?.name || 'Administrator',
+    };
+
+    // Optimistically update local state immediately
+    const current = this.getBlockedUsers();
+    const updated = [newBlocked, ...current.filter((b) => b.userId.toLowerCase() !== cleanId.toLowerCase())];
+    this.setBlockedUsers(updated);
+
+    const scriptUrl = this.getScriptUrl();
+    if (!scriptUrl) {
+      return { success: true, data: newBlocked };
+    }
+
+    const payload = {
+      action: 'BLOCK_USER',
+      spreadsheetId: ADMIN_SPREADSHEET_ID,
+      userId: cleanId,
+      studentName: newBlocked.studentName,
+      reason: newBlocked.reason,
+      blockedBy: newBlocked.blockedBy,
+      timestamp: newBlocked.timestamp,
+    };
+
+    try {
+      const res = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          return { success: true, data: newBlocked };
+        }
+        return { success: false, error: json.error || 'Server error' };
+      }
+      return { success: true, data: newBlocked };
+    } catch {
+      try {
+        await fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        });
+        return { success: true, data: newBlocked };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    }
+  },
+
+  /**
+   * Unblock a User ID (removes row from 'BlockedUsers' tab)
+   */
+  async unblockUser(userId: string): Promise<{ success: boolean; error?: string }> {
+    const cleanId = (userId || '').trim().toLowerCase();
+    if (!cleanId) return { success: false, error: 'User ID is required' };
+
+    // Optimistically update local state immediately
+    const current = this.getBlockedUsers();
+    const updated = current.filter((b) => (b.userId || '').trim().toLowerCase() !== cleanId);
+    this.setBlockedUsers(updated);
+
+    const scriptUrl = this.getScriptUrl();
+    if (!scriptUrl) return { success: true };
+
+    const payload = {
+      action: 'UNBLOCK_USER',
+      spreadsheetId: ADMIN_SPREADSHEET_ID,
+      userId: cleanId,
+    };
+
+    try {
+      await fetch(scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      });
+      return { success: true };
+    } catch {
+      try {
+        await fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        });
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    }
+  },
+
+  /**
    * Retrieve all Change Requests (filtering legacy demo requests)
    */
   getChangeRequests(): ChangeRequest[] {
@@ -410,9 +884,10 @@ export const adminSheetService = {
   },
 
   /**
-   * Complete / Dismiss a Change Request (removes it from the pending list)
+   * Complete / Dismiss a Change Request (removes it from the pending list and deletes from Google Sheet)
    */
   async deleteChangeRequest(id: string): Promise<boolean> {
+    this._deletedRequestIds.add(id);
     const list = this.getChangeRequests();
     const updated = list.filter((r) => r.id !== id);
     localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(updated));
@@ -427,6 +902,7 @@ export const adminSheetService = {
           body: JSON.stringify({
             action: 'DELETE_REQUEST',
             id,
+            spreadsheetId: ADMIN_SPREADSHEET_ID,
           }),
         });
       } catch (err) {
@@ -508,6 +984,48 @@ export const adminSheetService = {
         return { success: true };
       } catch (fallbackErr: any) {
         console.warn('Could not sync exam date to Google Sheet:', fallbackErr);
+        return { success: false, error: fallbackErr.message };
+      }
+    }
+  },
+
+  /**
+   * Update existing exam date in Google Apps Script Web App
+   */
+  async updateExamDateInSheet(originalExam: any, updatedExam: any): Promise<{ success: boolean; error?: string }> {
+    const scriptUrl = this.getExamDatesScriptUrl();
+    if (!scriptUrl) return { success: false, error: 'Google Apps Script Web App URL is not configured' };
+    const payload = {
+      action: 'UPDATE_EXAM_DATE',
+      spreadsheetId: EXAM_DATES_SPREADSHEET_ID,
+      originalSemester: originalExam?.semester,
+      originalSubjectCode: originalExam?.subjectCode,
+      originalExamType: originalExam?.examType,
+      originalDate: originalExam?.date,
+      exam: updatedExam,
+    };
+    try {
+      const res = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        return { success: json.success !== false, error: json.error };
+      }
+      return { success: true };
+    } catch (err: any) {
+      try {
+        await fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        });
+        return { success: true };
+      } catch (fallbackErr: any) {
+        console.warn('Could not update exam date in Google Sheet:', fallbackErr);
         return { success: false, error: fallbackErr.message };
       }
     }
@@ -600,6 +1118,10 @@ export const adminSheetService = {
   async fetchLiveSettings(forceRefresh = false): Promise<PortalSettings> {
     const cached = this.getPortalSettings();
     const now = Date.now();
+    // If recently set by admin action, respect the local setting for the cooldown window
+    if (this._lastSettingsFetch && this._lastSettingsFetch > now) {
+      return cached;
+    }
     // Cache for 2 seconds unless forced, ensuring real-time instant status updates
     if (!forceRefresh && this._lastSettingsFetch && now - this._lastSettingsFetch < 2000) {
       return cached;
@@ -613,8 +1135,8 @@ export const adminSheetService = {
       try {
         const isDev = import.meta.env.DEV;
         const gvizUrl = isDev
-          ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=Settings`
-          : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=Settings`;
+          ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=Settings&headers=1`
+          : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=Settings&headers=1`;
 
         const ctrl = new AbortController();
         const tid = setTimeout(() => ctrl.abort(), 1800);
@@ -626,16 +1148,21 @@ export const adminSheetService = {
           if (csvText && csvText.includes('is_locked')) {
             const lines = csvText.split(/\r?\n/);
             for (const line of lines) {
-              const cleaned = line.replace(/"/g, '').trim();
-              if (!cleaned) continue;
-              const parts = cleaned.split(',');
-              const k = (parts[0] || '').trim().toLowerCase();
-              const v = (parts[1] || '').trim();
-              if (k === 'is_locked') {
-                cached.is_locked = v.toUpperCase() === 'TRUE';
-              }
-              if (k === 'lock_reason') {
-                cached.lock_reason = v || 'System maintenance in progress.';
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              const m = trimmed.match(/^"([^"]+)"\s*,\s*"((?:[^"]|"")*)"/) ||
+                        trimmed.match(/^"([^"]+)"\s*,\s*([^,]*)/) ||
+                        trimmed.match(/^([^,]+)\s*,\s*"((?:[^"]|"")*)"/) ||
+                        trimmed.match(/^([^,]+)\s*,\s*([^,]*)/);
+              if (m) {
+                const k = m[1].trim().toLowerCase();
+                const v = m[2].replace(/""/g, '"').trim();
+                if (k === 'is_locked') {
+                  cached.is_locked = v.toUpperCase() === 'TRUE';
+                }
+                if (k === 'lock_reason' && v) {
+                  cached.lock_reason = v;
+                }
               }
             }
             localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(cached));
@@ -657,13 +1184,12 @@ export const adminSheetService = {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2500);
-      const response = await fetch(scriptUrl, { signal: controller.signal });
+      const settingsUrl = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}action=SETTINGS`;
+      const response = await fetch(settingsUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
       if (!response.ok) return cached;
       const json = await response.json();
-      if (!json.success || !json.data || !json.data.settings) return cached;
-
-      const rawSettings = json.data.settings;
+      const rawSettings = json.settings || (json.data && json.data.settings);
       if (Array.isArray(rawSettings) && rawSettings.length > 0) {
         for (const row of rawSettings) {
           if (!row || !row[0]) continue;
@@ -672,8 +1198,8 @@ export const adminSheetService = {
           if (key === 'is_locked') {
             cached.is_locked = val === true || String(val).toUpperCase() === 'TRUE';
           }
-          if (key === 'lock_reason' && val !== undefined) {
-            cached.lock_reason = String(val);
+          if (key === 'lock_reason' && val !== undefined && String(val).trim()) {
+            cached.lock_reason = String(val).trim();
           }
         }
         localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(cached));
@@ -736,13 +1262,24 @@ export const adminSheetService = {
     }
 
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(current));
-    this._lastSettingsFetch = Date.now();
+    // Protect local setting from being immediately overwritten by stale Google Sheet data for 8 seconds
+    this._lastSettingsFetch = Date.now() + 8000;
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('portal_settings_changed', { detail: current }));
     }
 
     const scriptUrl = this.getScriptUrl();
     if (scriptUrl) {
+      const lockReason = current.lock_reason || 'System maintenance in progress.';
+      // Try GET request with query params (reliable across CORS)
+      try {
+        const getUrl = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}action=SET_LOCK&is_locked=${locked}&lock_reason=${encodeURIComponent(lockReason)}&spreadsheetId=${ADMIN_SPREADSHEET_ID}`;
+        await fetch(getUrl).catch(() => null);
+      } catch (err) {
+        console.warn('GET sync to Google Sheet error:', err);
+      }
+
+      // Also fire POST request
       try {
         await fetch(scriptUrl, {
           method: 'POST',
@@ -751,8 +1288,9 @@ export const adminSheetService = {
           body: JSON.stringify({
             action: 'SET_LOCK',
             is_locked: locked,
-            lock_reason: current.lock_reason,
+            lock_reason: lockReason,
             locked_at: current.locked_at,
+            spreadsheetId: ADMIN_SPREADSHEET_ID,
           }),
         });
       } catch (err) {
@@ -785,6 +1323,7 @@ export const adminSheetService = {
       current_students_count: profileService.getAllLocal().length,
       pending_change_requests: pendingRequests,
       is_portal_locked: settings.is_locked,
+      blocked_users_count: this.getBlockedUsers().length,
     };
   },
 

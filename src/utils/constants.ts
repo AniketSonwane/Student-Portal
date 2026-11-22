@@ -17,6 +17,8 @@ export const ROUTES = {
   ATTENDANCE: '/attendance',
   EXAM_DATES: '/exam-dates',
   TIMETABLE: '/timetable',
+  SEMESTER_DATA: '/semester-data',
+  NOTICES: '/notices',
   SETTINGS: '/settings',
   TERMS: '/terms',
   ADMIN: '/admin',

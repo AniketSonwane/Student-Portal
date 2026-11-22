@@ -12,6 +12,8 @@ import {
   CalendarCheck,
   CalendarDays,
   Shield,
+  Layers,
+  Bell,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { marksService } from '../../services/marks';
@@ -183,7 +185,7 @@ export const DashboardPage: React.FC = () => {
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-3 sm:px-8 py-3 sm:py-4 pb-20 sm:pb-2 space-y-3 sm:space-y-4">
         {/* Unified Student Hero & Overview Single Card */}
-        <div className="relative bg-slate-900 dark:bg-[#0A0A0E] text-white rounded-2xl border border-slate-800 dark:border-[#222228] shadow-card dark:shadow-card-dark overflow-hidden transition-all duration-300 animate-card-slide-1">
+        <div className="relative bg-slate-900 dark:bg-[#151621] text-white rounded-2xl border border-slate-800 dark:border-[#282A3A] shadow-card dark:shadow-card-dark overflow-hidden transition-all duration-300 animate-card-slide-1">
           {/* Subtle accent bar at top */}
           <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-[#8048A8] to-[#F8D299] opacity-80" />
 
@@ -287,10 +289,10 @@ export const DashboardPage: React.FC = () => {
           <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 sm:mb-2.5">
             Portal Sections
           </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-3 sm:gap-4">
             <div
               onClick={() => navigate(ROUTES.PROFILE)}
-              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#222228] bg-white/90 dark:bg-[#0C0C10] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#282A3A] bg-white dark:bg-[#151621] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
             >
               <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-[#8048A8] group-hover:bg-[#8048A8]/10 group-hover:scale-110">
                 <User className="w-4 h-4 sm:w-5 sm:h-5 group-hover:text-[#8048A8] dark:group-hover:text-[#D1A7FF] transition-colors" />
@@ -301,7 +303,7 @@ export const DashboardPage: React.FC = () => {
 
             <div
               onClick={() => navigate(`${ROUTES.MARKS}?sem=${user?.current_semester || 3}`)}
-              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#222228] bg-white/90 dark:bg-[#0C0C10] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#282A3A] bg-white dark:bg-[#151621] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
             >
               <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-[#8048A8] group-hover:bg-[#8048A8]/10 group-hover:scale-110">
                 <BookOpen className="w-4 h-4 sm:w-5 sm:h-5 text-[#8048A8] dark:text-[#D1A7FF]" />
@@ -313,8 +315,21 @@ export const DashboardPage: React.FC = () => {
             </div>
 
             <div
+              onClick={() => navigate(ROUTES.SEMESTER_DATA)}
+              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#282A3A] bg-white dark:bg-[#151621] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+            >
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-[#8048A8] group-hover:bg-[#8048A8]/10 group-hover:scale-110">
+                <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-[#8048A8] dark:text-[#D1A7FF] transition-colors" />
+              </div>
+              <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-[#8048A8] dark:group-hover:text-[#D1A7FF] transition-colors">
+                Semester Data
+              </span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">Curriculum & records</span>
+            </div>
+
+            <div
               onClick={() => navigate(ROUTES.ATTENDANCE)}
-              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#222228] bg-white/90 dark:bg-[#0C0C10] hover:border-[#F59E51] dark:hover:border-[#F59E51] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#F59E51]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#282A3A] bg-white dark:bg-[#151621] hover:border-[#F59E51] dark:hover:border-[#F59E51] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#F59E51]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
             >
               <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-[#F59E51] group-hover:bg-[#F59E51]/10 group-hover:scale-110">
                 <CalendarCheck className="w-4 h-4 sm:w-5 sm:h-5 text-[#F59E51] transition-colors" />
@@ -325,7 +340,7 @@ export const DashboardPage: React.FC = () => {
 
             <div
               onClick={() => navigate(ROUTES.TIMETABLE)}
-              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#222228] bg-white/90 dark:bg-[#0C0C10] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#282A3A] bg-white dark:bg-[#151621] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
             >
               <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-[#8048A8] group-hover:bg-[#8048A8]/10 group-hover:scale-110">
                 <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-[#8048A8] dark:text-[#D1A7FF] transition-colors" />
@@ -336,7 +351,7 @@ export const DashboardPage: React.FC = () => {
 
             <div
               onClick={() => navigate(ROUTES.EXAM_DATES)}
-              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#222228] bg-white/90 dark:bg-[#0C0C10] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#282A3A] bg-white dark:bg-[#151621] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
             >
               <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-[#8048A8] group-hover:bg-[#8048A8]/10 group-hover:scale-110">
                 <CalendarDays className="w-4 h-4 sm:w-5 sm:h-5 text-[#8048A8] dark:text-[#D1A7FF] transition-colors" />
@@ -346,8 +361,19 @@ export const DashboardPage: React.FC = () => {
             </div>
 
             <div
+              onClick={() => navigate(ROUTES.NOTICES)}
+              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#282A3A] bg-white dark:bg-[#151621] hover:border-[#8048A8] dark:hover:border-[#8048A8] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-[#8048A8]/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+            >
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-[#8048A8] group-hover:bg-[#8048A8]/10 group-hover:scale-110">
+                <Bell className="w-4 h-4 sm:w-5 sm:h-5 text-[#8048A8] dark:text-[#D1A7FF] transition-colors" />
+              </div>
+              <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-[#8048A8] dark:group-hover:text-[#D1A7FF] transition-colors">Notices</span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">Announcements</span>
+            </div>
+
+            <div
               onClick={() => navigate(ROUTES.SETTINGS)}
-              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#222228] bg-white/90 dark:bg-[#0C0C10] hover:border-slate-400 dark:hover:border-[#383842] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-slate-400/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
+              className="p-2.5 sm:p-3 rounded-xl border border-slate-200 dark:border-[#282A3A] bg-white dark:bg-[#151621] hover:border-slate-400 dark:hover:border-[#383842] hover:-translate-y-1.5 hover:shadow-lg dark:hover:shadow-[0_12px_25px_-5px_rgba(0,0,0,0.8)] hover:ring-1 hover:ring-slate-400/20 active:scale-[0.96] touch-manipulation flex flex-col items-center text-center gap-1.5 sm:gap-2 transition-all duration-300 cursor-pointer group shadow-sm"
             >
               <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-slate-100 dark:bg-[#16161C] border border-slate-200 dark:border-[#272730] text-slate-700 dark:text-slate-300 flex items-center justify-center transition-all duration-300 group-hover:border-slate-400 group-hover:bg-slate-200/50 dark:group-hover:bg-zinc-800 group-hover:scale-110">
                 <Settings className="w-4 h-4 sm:w-5 sm:h-5 group-hover:text-slate-900 dark:group-hover:text-white transition-colors" />

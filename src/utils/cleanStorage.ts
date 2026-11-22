@@ -81,6 +81,26 @@ export const cleanupUnnecessaryStorage = (): void => {
         localStorage.removeItem('student_portal_admin_change_requests');
       }
     }
+
+    // 6. Sanitize notices cache: purge any corrupted fragment entries caused by legacy multiline line-splitting
+    const noticesRaw = localStorage.getItem('student_portal_notices');
+    if (noticesRaw) {
+      try {
+        const parsedNotices = JSON.parse(noticesRaw);
+        if (Array.isArray(parsedNotices)) {
+          const cleanNotices = parsedNotices.filter((n: any) => {
+            if (!n || typeof n !== 'object') return false;
+            if (typeof n.id !== 'string' || !n.id.trim() || n.id.includes('\n') || n.id.includes('"')) return false;
+            if (n.id.toLowerCase().includes('notice id')) return false;
+            if (typeof n.timestamp !== 'string' || n.timestamp.length > 60 || n.timestamp.includes('\n') || n.timestamp.includes('"')) return false;
+            return true;
+          });
+          localStorage.setItem('student_portal_notices', JSON.stringify(cleanNotices));
+        }
+      } catch {
+        localStorage.removeItem('student_portal_notices');
+      }
+    }
   } catch (err) {
     console.warn('Storage cleanup non-critical error:', err);
   }

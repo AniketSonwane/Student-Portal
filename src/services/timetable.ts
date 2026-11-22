@@ -14,6 +14,16 @@ export const DAYS_OF_WEEK: { full: DayName; short: 'Mon' | 'Tue' | 'Wed' | 'Thur
   { full: 'Saturday', short: 'Sat', dayIndex: 6 },
 ];
 
+export const TIMETABLE_TIMINGS_PRESETS: string[] = [
+  '10:30 AM - 11:30 AM',
+  '11:30 AM - 12:30 PM',
+  '12:30 PM - 01:30 PM',
+  '01:30 PM - 02:30 PM',
+  '02:30 PM - 03:30 PM',
+  '03:30 PM - 04:30 PM',
+  '04:30 PM - 05:30 PM',
+];
+
 /**
  * Check if the specified day is today (based on local clock)
  */
@@ -147,7 +157,7 @@ export const parseTimetableCSV = (csvText: string, targetSem: number): DaySchedu
     if (!normalizedDay || !dayMap[normalizedDay]) continue;
 
     const periodNum = parseInt(row[periodCol] || '1', 10) || (dayMap[normalizedDay].length + 1);
-    const timings = (timeCol !== -1 ? row[timeCol] : '') || '09:15 AM - 10:15 AM';
+    const timings = (timeCol !== -1 ? row[timeCol] : '') || '10:30 AM - 11:30 AM';
     const subjectCode = (codeCol !== -1 ? row[codeCol] : '') || `LEC ${periodNum}`;
     const subjectName = (nameCol !== -1 ? row[nameCol] : '') || subjectCode;
     const room = (roomCol !== -1 ? row[roomCol] : '') || 'Room 304';

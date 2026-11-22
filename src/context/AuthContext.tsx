@@ -55,6 +55,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
         }
       }
+
+      // Check if logged in student has been blocked
+      if (!isInspecting && !isAdmin) {
+        const student = authService.getCurrentStudent();
+        if (student) {
+          const blocked = adminSheetService.checkIfStudentIsBlocked([
+            student.student_id,
+            student.usn,
+            student.college_email,
+            student.personal_email,
+            student.google_email,
+          ]);
+          if (blocked) {
+            authService.logout();
+            setState({
+              user: null,
+              token: null,
+              isAuthenticated: false,
+              isLoading: false,
+              error: blocked.reason
+                ? `Your account (${blocked.userId}) has been blocked by administrator: "${blocked.reason}".`
+                : `Your account (${blocked.userId}) has been blocked by administrator.`,
+            });
+            return true;
+          }
+        }
+      }
       return settings.is_locked;
     } catch {
       return false;
@@ -85,16 +112,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
+    const handleBlockedUsersChanged = () => {
+      checkPortalLock(true);
+    };
+
     window.addEventListener('portal_settings_changed', handlePortalSettingsChanged);
+    window.addEventListener('portal_blocked_users_changed', handleBlockedUsersChanged);
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'student_portal_admin_settings') {
+      if (e.key === 'student_portal_admin_settings' || e.key === 'student_portal_admin_blocked_users') {
         checkPortalLock(false);
       }
     };
     window.addEventListener('storage', handleStorage);
 
+    // Periodic live lock check every 4 seconds so maintenance activates in real-time
+    const lockTimer = setInterval(() => {
+      checkPortalLock(true);
+    }, 4000);
+
     return () => {
+      clearInterval(lockTimer);
       window.removeEventListener('portal_settings_changed', handlePortalSettingsChanged);
+      window.removeEventListener('portal_blocked_users_changed', handleBlockedUsersChanged);
       window.removeEventListener('storage', handleStorage);
     };
   }, []);
@@ -210,14 +249,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  // 30-minute Session timeout management (skipped for admin sessions)
+  // 30-minute Session timeout management
   useEffect(() => {
     if (!state.isAuthenticated) return;
 
-    // Admin sessions and admin-inspect sessions never expire
-    const isAdmin = adminSheetService.isAdminAuthenticated();
-    const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
-    if (isAdmin || isInspecting) {
+    // Only primary admin session configured in environment never expires; student sessions expire after 30 minutes
+    if (authService.isTimeoutExempt()) {
       // Still check portal lock periodically, but no session timeout
       const interval = setInterval(() => {
         checkPortalLock(false);
@@ -266,7 +303,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
     };
-  }, [state.isAuthenticated]);
+  }, [state.isAuthenticated, state.user]);
 
   const clearError = () => {
     setState((prev) => ({ ...prev, error: null }));

@@ -56,11 +56,11 @@
 
 | Feature | Description |
 |---|---|
-| **Google Single Sign-On** | Seamless OAuth 2.0 JWT verification strictly against official college emails (`@sbjit.edu.in`). |
+| **Google Single Sign-On** | Seamless OAuth 2.0 JWT verification strictly against institutional college emails (`@sbjit.edu.in`). |
 | **Academic Performance Analytics** | Semester 1, 2, and 3 marks breakdown, assessment scores (CAE-1, CAE-2, TA, ESE), credits, and SGPA calculation. |
 | **Attendance Intelligence** | Real-time lecture attendance metrics with color-coded status badges (🟢 Safe $\ge 75\%$, 🟡 Warning $65-74\%$, 🔴 Critical $< 65\%$). |
 | **Elective Course Tracks** | Automatic resolution of Multidisciplinary Minor (MDM) and Open Elective (OE) course tracks by student USN. |
-| **Downloadable Grade Statements** | Official printable marksheet generator featuring institutional headers, QR verification codes, and security watermarks. |
+| **Downloadable Grade Statements** | Verified printable marksheet generator featuring institutional headers, QR verification codes, and security watermarks. |
 | **Interactive Weekly Timetable** | Day-by-day class schedule with live lecture period highlighting, instructor details, room numbers, and theory/lab tags. |
 | **Examination Timetable** | Filterable schedule for CAE-1, CAE-2, and ESE with upcoming countdown badges and exam hall locations. |
 | **Student Profile & Correction Requests** | Comprehensive student record overview with in-app ticket submission to rectify personal or academic discrepancies. |

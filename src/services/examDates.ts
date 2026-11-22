@@ -326,6 +326,53 @@ export const examDatesService = {
   },
 
   /**
+   * Update an existing exam date directly in Google Sheet database
+   */
+  async updateExamDate(
+    originalExam: ExamDateItem,
+    updated: {
+      semester: number;
+      examType: ExamType;
+      subjectCode: string;
+      subjectName: string;
+      date: string;
+      timings: string;
+      venue?: string;
+      status?: 'Upcoming' | 'Today' | 'Completed';
+    }
+  ): Promise<{ success: boolean; data?: ExamDateItem; sheetSynced?: boolean; error?: string }> {
+    try {
+      const { isoDate, formattedDate, dayOfWeek } = normalizeDateString(updated.date);
+      const { status, isCompleted } = calculateExamStatus(isoDate, updated.status);
+      const updatedItem: ExamDateItem = {
+        id: originalExam.id,
+        semester: updated.semester,
+        examType: updated.examType,
+        subjectCode: updated.subjectCode.trim(),
+        subjectName: updated.subjectName.trim(),
+        date: isoDate,
+        formattedDate,
+        dayOfWeek,
+        timings: updated.timings.trim(),
+        venue: updated.venue?.trim() || undefined,
+        status,
+        isCompleted,
+      };
+
+      const { adminSheetService } = await import('./adminSheetService');
+      const syncRes = await adminSheetService.updateExamDateInSheet(originalExam, updatedItem);
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('exam_dates_updated', { detail: updatedItem }));
+      }
+
+      return { success: syncRes.success, data: updatedItem, sheetSynced: syncRes.success, error: syncRes.error };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to update exam date' };
+    }
+  },
+
+  /**
    * Delete an exam date directly from Google Sheet (NO local storage)
    */
   async deleteExamDate(id: string, examItem?: ExamDateItem): Promise<boolean> {

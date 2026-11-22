@@ -32,13 +32,39 @@ export const authService = {
   },
 
   /**
+   * Determine whether current session is exempt from the 30-minute session timeout.
+   * Only the primary administrator configured via environment variables (VITE_ADMIN_EMAIL)
+   * is exempt. All student accounts and non-primary sessions are strictly subject to the 30-minute timeout.
+   */
+  isTimeoutExempt(): boolean {
+    // 1. If currently inspecting student records as admin:
+    const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+    if (isInspecting) {
+      const adminUser = adminSheetService.getAdminUser();
+      return adminSheetService.isPrimaryAdminEmail(adminUser?.email || '');
+    }
+
+    // 2. If a student is logged in directly, they are strictly subject to the 30-min timeout
+    const currentStudent = this.getCurrentStudent();
+    if (currentStudent) {
+      return false;
+    }
+
+    // 3. If in Admin Portal session:
+    if (adminSheetService.isAdminAuthenticated()) {
+      const adminUser = adminSheetService.getAdminUser();
+      return adminSheetService.isPrimaryAdminEmail(adminUser?.email || '');
+    }
+
+    return false;
+  },
+
+  /**
    * Check if current session has expired (after 30 minutes of login).
-   * Admin sessions never expire.
+   * Primary administrator sessions configured in environment never expire.
    */
   isSessionExpired(): boolean {
-    // Admin sessions do not expire
-    if (adminSheetService.isAdminAuthenticated()) return false;
-    if (localStorage.getItem('student_portal_admin_inspecting') === 'true') return false;
+    if (this.isTimeoutExempt()) return false;
 
     const loginTime = this.getLoginTime();
     if (!loginTime) return true;
@@ -47,12 +73,10 @@ export const authService = {
 
   /**
    * Get remaining session time in milliseconds.
-   * Returns Infinity for admin sessions (no expiry).
+   * Returns Infinity for primary administrator sessions.
    */
   getRemainingSessionTime(): number {
-    // Admin sessions never expire
-    if (adminSheetService.isAdminAuthenticated()) return Infinity;
-    if (localStorage.getItem('student_portal_admin_inspecting') === 'true') return Infinity;
+    if (this.isTimeoutExempt()) return Infinity;
 
     const loginTime = this.getLoginTime();
     if (!loginTime) return 0;
@@ -130,6 +154,10 @@ export const authService = {
 
     const res = await this.verifyStudent(emailToVerify);
     if (res.success && res.data) {
+      // Clean up any lingering admin session flags so student session is clean and subject to 30-min timeout
+      adminSheetService.setAdminAuthenticated(false);
+      localStorage.removeItem('student_portal_admin_inspecting');
+
       if (googlePicture) {
         res.data.student.profile_image = googlePicture;
       }
@@ -154,10 +182,11 @@ export const authService = {
       };
     }
 
-    // Fetch live settings (force refresh to guarantee instant lock check) and student directory in parallel
+    // Fetch live settings (force refresh to guarantee instant lock check), student directory, and blocked users in parallel
     const [settings, sheetRes] = await Promise.all([
       adminSheetService.fetchLiveSettings(true),
       profileService.fetchAllStudents(false),
+      adminSheetService.fetchBlockedUsers(true),
     ]);
 
     if (settings.is_locked && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
@@ -214,6 +243,36 @@ export const authService = {
       };
     }
 
+    // Check if the student / user ID is blocked by administrator
+    const blockedEntry = adminSheetService.checkIfStudentIsBlocked([
+      rawEmail,
+      normRaw,
+      student.student_id,
+      student.usn,
+      student.college_email,
+      student.personal_email,
+      student.google_email,
+    ]);
+
+    if (blockedEntry && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
+      adminSheetService.recordLog({
+        email: student.college_email || rawEmail,
+        student_name: student.name,
+        usn: student.usn,
+        status: 'BLOCKED',
+        reason: blockedEntry.reason || 'User ID is blocked by administrator',
+      });
+      return {
+        success: false,
+        error: {
+          code: 'USER_BLOCKED',
+          message: blockedEntry.reason
+            ? `Your account (${blockedEntry.userId}) has been blocked by administrator: "${blockedEntry.reason}". Please contact administration.`
+            : `Your account (${blockedEntry.userId}) has been blocked by administrator. Please contact administration.`,
+        },
+      };
+    }
+
     // Record successful login audit in background (non-blocking)
     adminSheetService.recordLog({
       email: student.college_email || rawEmail,
@@ -266,6 +325,29 @@ export const authService = {
         error: {
           code: 'UNAUTHORIZED',
           message: `The account "${rawEmail}" is not authorized.`,
+        },
+      };
+    }
+
+    // Check if student is blocked
+    const blockedEntry = adminSheetService.checkIfStudentIsBlocked([
+      rawEmail,
+      normRaw,
+      student.student_id,
+      student.usn,
+      student.college_email,
+      student.personal_email,
+      student.google_email,
+    ]);
+
+    if (blockedEntry && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
+      return {
+        success: false,
+        error: {
+          code: 'USER_BLOCKED',
+          message: blockedEntry.reason
+            ? `Your account (${blockedEntry.userId}) has been blocked by administrator: "${blockedEntry.reason}".`
+            : `Your account (${blockedEntry.userId}) has been blocked by administrator.`,
         },
       };
     }

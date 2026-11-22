@@ -24,9 +24,9 @@ export const Card: React.FC<CardProps> = ({
   };
 
   const variantStyles = {
-    default: 'bg-white/95 dark:bg-[#0D0D11]/95 backdrop-blur-sm border border-slate-200/80 dark:border-[#222228] shadow-card dark:shadow-card-dark rounded-xl',
-    flat: 'bg-slate-50 dark:bg-[#131317] rounded-xl border border-transparent',
-    bordered: 'bg-white dark:bg-[#0D0D11] border border-slate-200 dark:border-[#272730] rounded-xl',
+    default: 'bg-white/95 dark:bg-[#151621] backdrop-blur-sm border border-slate-200/80 dark:border-[#282A3A] shadow-card dark:shadow-card-dark rounded-xl',
+    flat: 'bg-slate-50 dark:bg-[#181926] rounded-xl border border-transparent',
+    bordered: 'bg-white dark:bg-[#151621] border border-slate-200 dark:border-[#282A3A] rounded-xl',
   };
 
   const interactiveStyles = interactive
