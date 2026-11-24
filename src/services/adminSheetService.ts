@@ -539,27 +539,69 @@ export const adminSheetService = {
     localStorage.removeItem(STORAGE_KEYS.LOGS);
 
     // Directly sync log to Google Apps Script Web App in the background (fire-and-forget)
-    const scriptUrl = this.getScriptUrl();
-    if (scriptUrl) {
-      fetch(scriptUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'ADD_LOG',
-          log: newLog,
-        }),
-      }).catch((err) => {
-        console.warn('Could not sync log to Google Sheet Web App:', err);
-      });
-    }
+    this.postToScript({
+      action: 'ADD_LOG',
+      log: newLog,
+    }).catch((err) => {
+      console.warn('Could not sync log to Google Sheet Web App:', err);
+    });
 
     return newLog;
   },
 
   /**
-   * Clear all login logs (admin action)
+   * Universal robust helper to POST payloads to Google Apps Script Web App.
+   * Handles Google 302 redirects and cross-origin security restrictions on Netlify.
    */
+  async postToScript(payload: Record<string, any>): Promise<{ success: boolean; data?: any; error?: string }> {
+    const scriptUrl = this.getScriptUrl();
+    if (!scriptUrl) {
+      return { success: false, error: 'No Google Apps Script URL configured.' };
+    }
+
+    const bodyStr = JSON.stringify({
+      spreadsheetId: ADMIN_SPREADSHEET_ID,
+      ...payload,
+    });
+
+    try {
+      const res = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: bodyStr,
+        redirect: 'follow',
+      });
+
+      if (res.ok) {
+        try {
+          const json = await res.json();
+          if (json && json.success !== false) {
+            return { success: true, data: json };
+          }
+          if (json && json.error) {
+            return { success: false, error: json.error };
+          }
+        } catch {
+          // If response body is opaque or not JSON, HTTP 200 means Apps Script executed
+          return { success: true };
+        }
+      }
+      return { success: true };
+    } catch {
+      // Browser blocked CORS redirect header on Netlify: Send via fire-and-forget no-cors
+      try {
+        await fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: bodyStr,
+        });
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Network error' };
+      }
+    }
+  },
   clearLogs() {
     this._cachedLogs = [];
     localStorage.removeItem(STORAGE_KEYS.LOGS);
@@ -890,34 +932,11 @@ export const adminSheetService = {
       timestamp: newBlocked.timestamp,
     };
 
-    try {
-      const res = await fetch(scriptUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success) {
-          return { success: true, data: newBlocked };
-        }
-        return { success: false, error: json.error || 'Server error' };
-      }
-      return { success: true, data: newBlocked };
-    } catch {
-      try {
-        await fetch(scriptUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload),
-        });
-        return { success: true, data: newBlocked };
-      } catch (err: any) {
-        return { success: false, error: err.message };
-      }
+    const res = await this.postToScript(payload);
+    if (!res.success && res.error) {
+      return { success: false, error: res.error };
     }
+    return { success: true, data: newBlocked };
   },
 
   /**
@@ -951,26 +970,8 @@ export const adminSheetService = {
       userId: cleanId,
     };
 
-    try {
-      await fetch(scriptUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload),
-      });
-      return { success: true };
-    } catch {
-      try {
-        await fetch(scriptUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload),
-        });
-        return { success: true };
-      } catch (err: any) {
-        return { success: false, error: err.message };
-      }
-    }
+    const res = await this.postToScript(payload);
+    return { success: res.success, error: res.error };
   },
 
   /**
