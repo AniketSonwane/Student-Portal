@@ -974,35 +974,57 @@ export const AdminPortalPage: React.FC = () => {
   };
 
   const handleQuickToggleBlock = async (userId: string, studentName?: string, email?: string) => {
-    const cleanId = (userId && userId !== 'N/A') ? userId.trim() : (email ? email.trim() : '');
-    if (!cleanId) return;
+    const primaryId = (userId && userId !== 'N/A') ? userId.trim() : (email ? email.trim() : '');
+    const altEmail = email && email !== 'N/A' && email !== primaryId ? email.trim() : undefined;
+    if (!primaryId) return;
 
-    const isCurrentlyBlocked = adminSheetService.isUserBlocked(cleanId) || (email && adminSheetService.isUserBlocked(email));
+    const isCurrentlyBlocked = adminSheetService.isUserBlocked(primaryId) || (altEmail && adminSheetService.isUserBlocked(altEmail));
     if (isCurrentlyBlocked) {
-      if (window.confirm(`Unblock ${studentName ? `${studentName} (${cleanId})` : cleanId}?`)) {
-        await handleUnblockStudent(cleanId);
-        if (email && email !== cleanId) {
-          await handleUnblockStudent(email);
+      if (window.confirm(`Unblock ${studentName ? `${studentName} (${primaryId})` : primaryId}?`)) {
+        setIsSubmittingBlock(true);
+        try {
+          await adminSheetService.unblockUser(primaryId);
+          if (altEmail) {
+            await adminSheetService.unblockUser(altEmail);
+          }
+          setBlockedUsers(adminSheetService.getBlockedUsers());
+          setBlockActionMessage(`User "${studentName || primaryId}" has been unblocked.`);
+          setTimeout(() => setBlockActionMessage(null), 3000);
+        } finally {
+          setIsSubmittingBlock(false);
         }
       }
     } else {
       const promptReason = window.prompt(
-        `Block user "${studentName ? `${studentName} (${cleanId})` : cleanId}" from accessing the portal?\n\nEnter reason for blocking (optional):`,
+        `Block user "${studentName ? `${studentName} (${primaryId})` : primaryId}" from accessing the portal?\n\nEnter reason for blocking (optional):`,
         'Administrative restriction'
       );
       if (promptReason === null) return; // user cancelled
 
+      const reason = promptReason.trim() || 'Administrative restriction';
       setIsSubmittingBlock(true);
       try {
+        // Block primary identifier (USN or ID)
         const res = await adminSheetService.blockUser({
-          userId: cleanId,
+          userId: primaryId,
           studentName: studentName || undefined,
-          reason: promptReason.trim() || 'Administrative restriction',
+          reason,
           blockedBy: adminUser?.email || 'admin',
         });
+
+        // Also block email identifier if different, to ensure immediate foolproof block across all student logins
+        if (altEmail) {
+          await adminSheetService.blockUser({
+            userId: altEmail,
+            studentName: studentName || undefined,
+            reason,
+            blockedBy: adminUser?.email || 'admin',
+          });
+        }
+
         if (res.success) {
           setBlockedUsers(adminSheetService.getBlockedUsers());
-          setBlockActionMessage(`User "${studentName || cleanId}" has been blocked.`);
+          setBlockActionMessage(`User "${studentName || primaryId}" has been blocked.`);
           setTimeout(() => setBlockActionMessage(null), 4000);
         } else {
           alert(res.error || 'Failed to block user');

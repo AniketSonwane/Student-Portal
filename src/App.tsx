@@ -103,17 +103,22 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 const GlobalBlockedUserHandler: React.FC = () => {
   const { blockedInfo, dismissBlockedAndLogout } = useAuth();
   const [countdown, setCountdown] = React.useState(5);
+  const dismissRef = React.useRef(dismissBlockedAndLogout);
+  dismissRef.current = dismissBlockedAndLogout;
 
   React.useEffect(() => {
     if (!blockedInfo) {
       setCountdown(5);
       return;
     }
+
+    setCountdown(5);
+
     const timer = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          dismissBlockedAndLogout();
+          dismissRef.current();
           return 0;
         }
         return prev - 1;
@@ -121,7 +126,7 @@ const GlobalBlockedUserHandler: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [blockedInfo]);
+  }, [blockedInfo?.userId]);
 
   return (
     <BlockedAccountModal

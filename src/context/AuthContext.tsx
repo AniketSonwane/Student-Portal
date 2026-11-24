@@ -37,11 +37,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
   const [blockedInfo, setBlockedInfo] = useState<{ userId: string; reason?: string } | null>(null);
 
-  const dismissBlockedAndLogout = () => {
-    const reason = blockedInfo?.reason || 'Your account has been blocked by administrator.';
+  const dismissBlockedAndLogout = React.useCallback(() => {
+    const reason =
+      blockedInfo?.reason ||
+      sessionStorage.getItem('student_portal_blocked_reason') ||
+      'Your account has been blocked by administrator.';
     try {
       sessionStorage.setItem('student_portal_blocked_reason', reason);
     } catch {}
+
     setBlockedInfo(null);
     authService.logout();
     setState({
@@ -51,10 +55,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isLoading: false,
       error: reason,
     });
-    if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
-      window.location.replace(ROUTES.LOGIN);
+
+    if (typeof window !== 'undefined') {
+      window.location.href = ROUTES.LOGIN;
     }
-  };
+  }, [blockedInfo]);
 
   const checkPortalLock = async (force = false): Promise<boolean> => {
     try {
@@ -80,7 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             error: settings.lock_reason || 'The portal is currently locked for maintenance by the administrator.',
           });
           if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
-            window.location.replace(ROUTES.LOGIN);
+            window.location.href = ROUTES.LOGIN;
           }
         }
       }
@@ -104,9 +109,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               sessionStorage.setItem('student_portal_blocked_reason', reasonMsg);
             } catch {}
 
-            setBlockedInfo({
-              userId: blocked.userId,
-              reason: blocked.reason || 'Administrative restriction',
+            setBlockedInfo((prev) => {
+              if (prev && prev.userId === blocked.userId) return prev;
+              return {
+                userId: blocked.userId,
+                reason: blocked.reason || 'Administrative restriction',
+              };
             });
             return true;
           }
