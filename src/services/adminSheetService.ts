@@ -174,9 +174,10 @@ export const adminSheetService = {
       const isDev = import.meta.env.DEV;
       const getGvizUrl = (sheet: string) => {
         const extra = sheet === 'Settings' ? '&headers=1' : '';
+        const cacheBuster = `&_cb=${Date.now()}`;
         return isDev
-          ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}${extra}`
-          : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}${extra}`;
+          ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}${extra}${cacheBuster}`
+          : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}${extra}${cacheBuster}`;
       };
 
       const [logRes, reqRes, setRes, blockRes] = await Promise.all([
@@ -642,9 +643,6 @@ export const adminSheetService = {
       if (!workingMap.has(cleanKey)) {
         // Remote hasn't caught up yet; inject local block
         workingMap.set(cleanKey, record.blockedUser);
-      } else {
-        // Remote now includes this blocked user; we can safely clear from recent buffer
-        delete recentlyBlocked[cleanKey];
       }
     }
 
@@ -794,9 +792,10 @@ export const adminSheetService = {
     if (adminSheetId) {
       try {
         const isDev = import.meta.env.DEV;
+        const cacheBuster = `&_cb=${Date.now()}`;
         const gvizUrl = isDev
-          ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('BlockedUsers')}&headers=1`
-          : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('BlockedUsers')}&headers=1`;
+          ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('BlockedUsers')}&headers=1${cacheBuster}`
+          : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('BlockedUsers')}&headers=1${cacheBuster}`;
         const ctrl = new AbortController();
         const tid = setTimeout(() => ctrl.abort(), 2500);
         const res = await fetch(gvizUrl, { signal: ctrl.signal });

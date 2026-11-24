@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { BlockedAccountModal } from './components/common/BlockedAccountModal';
 import { LoginPage } from './pages/Login/LoginPage';
 import { DashboardPage } from './pages/Dashboard/DashboardPage';
 import { MarksPage } from './pages/Marks/MarksPage';
@@ -27,7 +28,7 @@ import { ROUTES } from './utils/constants';
 
 // Protected Route Guard
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading, isPortalLocked } = useAuth();
+  const { isAuthenticated, isLoading, isPortalLocked, blockedInfo } = useAuth();
 
   if (isLoading) {
     return (
@@ -45,8 +46,8 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
     return <Navigate to={ROUTES.LOGIN} replace />;
   }
 
-  // If student is blocked, immediately terminate session and redirect to login
-  if (!isInspecting && !isAdmin) {
+  // If student is blocked and modal acknowledged or direct block detected on mount
+  if (!isInspecting && !isAdmin && !blockedInfo) {
     const student = authService.getCurrentStudent();
     if (student) {
       const blocked = adminSheetService.checkIfStudentIsBlocked([
@@ -69,7 +70,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
     }
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated && !blockedInfo) {
     return <Navigate to={ROUTES.LOGIN} replace />;
   }
 
@@ -98,10 +99,48 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return <>{children}</>;
 };
 
+// Global Blocked User Handler Component
+const GlobalBlockedUserHandler: React.FC = () => {
+  const { blockedInfo, dismissBlockedAndLogout } = useAuth();
+  const [countdown, setCountdown] = React.useState(5);
+
+  React.useEffect(() => {
+    if (!blockedInfo) {
+      setCountdown(5);
+      return;
+    }
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          dismissBlockedAndLogout();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [blockedInfo]);
+
+  return (
+    <BlockedAccountModal
+      isOpen={Boolean(blockedInfo)}
+      blockedUser={blockedInfo?.userId}
+      reason={blockedInfo?.reason}
+      secondsRemaining={countdown}
+      onAcknowledge={dismissBlockedAndLogout}
+    />
+  );
+};
+
 export const App: React.FC = () => {
   return (
     <ThemeProvider>
       <AuthProvider>
+        {/* Global Blocked User Alert Modal */}
+        <GlobalBlockedUserHandler />
+
         {/* Interactive Google Stitch Glowing Grid Background */}
         <InteractiveGridBackground />
 

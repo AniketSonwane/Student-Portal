@@ -973,19 +973,43 @@ export const AdminPortalPage: React.FC = () => {
     }
   };
 
-  const handleUnblockUserClick = async (userId: string) => {
-    if (!window.confirm(`Are you sure you want to unblock user "${userId}"?`)) return;
-    await handleUnblockStudent(userId);
-  };
+  const handleQuickToggleBlock = async (userId: string, studentName?: string, email?: string) => {
+    const cleanId = (userId && userId !== 'N/A') ? userId.trim() : (email ? email.trim() : '');
+    if (!cleanId) return;
 
-  const handleQuickToggleBlock = async (userId: string, studentName?: string) => {
-    const isCurrentlyBlocked = adminSheetService.isUserBlocked(userId);
+    const isCurrentlyBlocked = adminSheetService.isUserBlocked(cleanId) || (email && adminSheetService.isUserBlocked(email));
     if (isCurrentlyBlocked) {
-      if (window.confirm(`Unblock ${studentName ? `${studentName} (${userId})` : userId}?`)) {
-        await handleUnblockUserClick(userId);
+      if (window.confirm(`Unblock ${studentName ? `${studentName} (${cleanId})` : cleanId}?`)) {
+        await handleUnblockStudent(cleanId);
+        if (email && email !== cleanId) {
+          await handleUnblockStudent(email);
+        }
       }
     } else {
-      handleStartInlineBlock(userId, studentName || userId);
+      const promptReason = window.prompt(
+        `Block user "${studentName ? `${studentName} (${cleanId})` : cleanId}" from accessing the portal?\n\nEnter reason for blocking (optional):`,
+        'Administrative restriction'
+      );
+      if (promptReason === null) return; // user cancelled
+
+      setIsSubmittingBlock(true);
+      try {
+        const res = await adminSheetService.blockUser({
+          userId: cleanId,
+          studentName: studentName || undefined,
+          reason: promptReason.trim() || 'Administrative restriction',
+          blockedBy: adminUser?.email || 'admin',
+        });
+        if (res.success) {
+          setBlockedUsers(adminSheetService.getBlockedUsers());
+          setBlockActionMessage(`User "${studentName || cleanId}" has been blocked.`);
+          setTimeout(() => setBlockActionMessage(null), 4000);
+        } else {
+          alert(res.error || 'Failed to block user');
+        }
+      } finally {
+        setIsSubmittingBlock(false);
+      }
     }
   };
 
@@ -2176,18 +2200,22 @@ export const AdminPortalPage: React.FC = () => {
                               const targetId = log.usn || log.email;
                               if (!targetId || targetId === 'N/A') return null;
                               const blocked = adminSheetService.isUserBlocked(targetId) || adminSheetService.isUserBlocked(log.email);
+                              const isOperating = isSubmittingBlock || isUnblockingUserId === targetId || isUnblockingUserId === log.email;
                               return (
                                 <button
                                   type="button"
-                                  onClick={() => handleQuickToggleBlock(targetId, log.student_name)}
+                                  disabled={isOperating}
+                                  onClick={() => handleQuickToggleBlock(targetId, log.student_name, log.email)}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                                    isOperating ? 'opacity-50 cursor-not-allowed ' : ''
+                                  }${
                                     blocked
                                       ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-100'
                                       : 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-500/30 hover:bg-rose-100'
                                   }`}
                                   title={blocked ? 'Click to unblock user' : 'Click to block user from portal'}
                                 >
-                                  {blocked ? 'Unblock' : 'Block'}
+                                  {isOperating ? '...' : (blocked ? 'Unblock' : 'Block')}
                                 </button>
                               );
                             })()}

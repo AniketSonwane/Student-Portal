@@ -14,6 +14,8 @@ interface AuthContextType extends AuthState {
   isPortalLocked: boolean;
   lockReason: string | null;
   checkPortalLock: (force?: boolean) => Promise<boolean>;
+  blockedInfo: { userId: string; reason?: string } | null;
+  dismissBlockedAndLogout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -33,6 +35,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [lockReason, setLockReason] = useState<string | null>(() => {
     return adminSheetService.getPortalSettings().lock_reason || null;
   });
+  const [blockedInfo, setBlockedInfo] = useState<{ userId: string; reason?: string } | null>(null);
+
+  const dismissBlockedAndLogout = () => {
+    const reason = blockedInfo?.reason || 'Your account has been blocked by administrator.';
+    try {
+      sessionStorage.setItem('student_portal_blocked_reason', reason);
+    } catch {}
+    setBlockedInfo(null);
+    authService.logout();
+    setState({
+      user: null,
+      token: null,
+      isAuthenticated: false,
+      isLoading: false,
+      error: reason,
+    });
+    if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
+      window.location.replace(ROUTES.LOGIN);
+    }
+  };
 
   const checkPortalLock = async (force = false): Promise<boolean> => {
     try {
@@ -63,7 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // Check if logged in student has been blocked - immediately terminate session
+      // Check if logged in student has been blocked - show message then end session
       if (!isInspecting && !isAdmin) {
         const student = authService.getCurrentStudent();
         if (student) {
@@ -82,18 +104,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               sessionStorage.setItem('student_portal_blocked_reason', reasonMsg);
             } catch {}
 
-            authService.logout();
-            setState({
-              user: null,
-              token: null,
-              isAuthenticated: false,
-              isLoading: false,
-              error: reasonMsg,
+            setBlockedInfo({
+              userId: blocked.userId,
+              reason: blocked.reason || 'Administrative restriction',
             });
-
-            if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
-              window.location.replace(ROUTES.LOGIN);
-            }
             return true;
           }
         }
@@ -381,6 +395,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isPortalLocked,
         lockReason,
         checkPortalLock,
+        blockedInfo,
+        dismissBlockedAndLogout,
       }}
     >
       {children}
