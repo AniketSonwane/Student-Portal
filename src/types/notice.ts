@@ -35,6 +35,7 @@ export interface CreateNoticeInput {
 }
 
 export interface UpdateNoticeInput {
+  timestamp?: string; // Optional custom or updated timestamp in IST
   semester?: number | 'ALL';
   title?: string;
   content?: string;

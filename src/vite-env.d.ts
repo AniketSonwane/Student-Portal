@@ -16,7 +16,13 @@ interface ImportMetaEnv {
   readonly VITE_GOOGLE_SHEETS_EXAM_DATES_ID?: string;
   readonly VITE_GOOGLE_SHEETS_TIMETABLE_ID?: string;
   readonly VITE_GOOGLE_SHEETS_ADMIN_ID?: string;
+  readonly VITE_GOOGLE_SHEETS_NOTICES_ID?: string;
+  readonly VITE_GOOGLE_DRIVE_NOTICES_FOLDER_ID?: string;
+  readonly VITE_GOOGLE_DRIVE_SEM1_FOLDER_ID?: string;
+  readonly VITE_GOOGLE_DRIVE_SEM2_FOLDER_ID?: string;
+  readonly VITE_GOOGLE_DRIVE_SEM3_FOLDER_ID?: string;
   readonly VITE_GOOGLE_SHEETS_ADMIN_API_URL?: string;
+  readonly VITE_GOOGLE_DRIVE_SEMESTER_API_URL?: string;
   readonly VITE_GOOGLE_SHEETS_TIMETABLE_API_URL?: string;
   readonly VITE_GOOGLE_SHEETS_EXAM_DATES_API_URL?: string;
   readonly VITE_ADMIN_SHEET_URL?: string;

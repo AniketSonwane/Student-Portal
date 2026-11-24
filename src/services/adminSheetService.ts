@@ -9,9 +9,13 @@ const STORAGE_KEYS = {
   REQUESTS: 'student_portal_admin_change_requests',
   SETTINGS: 'student_portal_admin_settings',
   BLOCKED_USERS: 'student_portal_admin_blocked_users',
+  RECENTLY_BLOCKED: 'student_portal_admin_recently_blocked',
+  RECENTLY_UNBLOCKED: 'student_portal_admin_recently_unblocked',
   ADMIN_AUTH: 'student_portal_admin_authenticated',
   SHEET_URL: 'student_portal_admin_sheet_url',
 };
+
+const RECONCILIATION_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL to outlive Google GViz CDN cache lag
 
 
 export const adminSheetService = {
@@ -155,7 +159,7 @@ export const adminSheetService = {
   },
 
   /**
-   * Fast-path: Fetch live audit logs, change requests, and settings directly from Google Sheet via GViz CSV
+   * Fast-path: Fetch administrative activity logs, change requests, and settings directly via GViz CSV
    */
   async fetchFromGviz(): Promise<{
     success: boolean;
@@ -239,7 +243,8 @@ export const adminSheetService = {
               });
             }
             parsedBlocked.reverse();
-            this.setBlockedUsers(parsedBlocked);
+            const reconciled = this.reconcileBlockedUsers(parsedBlocked);
+            this.setBlockedUsers(reconciled);
           }
         } catch (bErr) {
           console.warn('Could not parse BlockedUsers from GViz:', bErr);
@@ -451,6 +456,25 @@ export const adminSheetService = {
         }
       }
 
+      // 4. Parse Blocked Users directly from sheet (with local reconciliation)
+      if (Array.isArray(rawData.blocked) && rawData.blocked.length > 1) {
+        const parsedBlocked: BlockedUser[] = [];
+        for (let i = 1; i < rawData.blocked.length; i++) {
+          const row = rawData.blocked[i];
+          if (!row || !row[1]) continue;
+          parsedBlocked.push({
+            timestamp: row[0] ? new Date(row[0]).toISOString() : new Date().toISOString(),
+            userId: String(row[1]).trim(),
+            studentName: row[2] ? String(row[2]).trim() : undefined,
+            reason: row[3] ? String(row[3]).trim() : undefined,
+            blockedBy: row[4] ? String(row[4]).trim() : undefined,
+          });
+        }
+        parsedBlocked.reverse();
+        const reconciled = this.reconcileBlockedUsers(parsedBlocked);
+        this.setBlockedUsers(reconciled);
+      }
+
       return {
         success: true,
         logs: parsedLogs,
@@ -541,6 +565,97 @@ export const adminSheetService = {
   },
 
   /**
+   * Load recently blocked users with timestamp to prevent CDN cache overwrites
+   */
+  getRecentlyBlocked(): Record<string, { blockedUser: BlockedUser; timestamp: number }> {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.RECENTLY_BLOCKED);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {};
+  },
+
+  /**
+   * Save recently blocked users buffer
+   */
+  saveRecentlyBlocked(data: Record<string, { blockedUser: BlockedUser; timestamp: number }>): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.RECENTLY_BLOCKED, JSON.stringify(data));
+    } catch {}
+  },
+
+  /**
+   * Load recently unblocked user IDs with timestamp to prevent CDN cache resurrection
+   */
+  getRecentlyUnblocked(): Record<string, number> {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.RECENTLY_UNBLOCKED);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {};
+  },
+
+  /**
+   * Save recently unblocked user IDs buffer
+   */
+  saveRecentlyUnblocked(data: Record<string, number>): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.RECENTLY_UNBLOCKED, JSON.stringify(data));
+    } catch {}
+  },
+
+  /**
+   * Reconcile remote blocked users list with recent local admin actions.
+   * This completely prevents CDN caching lag from unblocking users or resurrecting unblocked users.
+   */
+  reconcileBlockedUsers(remoteList: BlockedUser[]): BlockedUser[] {
+    const now = Date.now();
+    const recentlyBlocked = this.getRecentlyBlocked();
+    const recentlyUnblocked = this.getRecentlyUnblocked();
+
+    // 1. Purge expired entries (> 5 minutes)
+    for (const [k, v] of Object.entries(recentlyBlocked)) {
+      if (now - v.timestamp > RECONCILIATION_TTL_MS) {
+        delete recentlyBlocked[k];
+      }
+    }
+    for (const [k, ts] of Object.entries(recentlyUnblocked)) {
+      if (now - ts > RECONCILIATION_TTL_MS) {
+        delete recentlyUnblocked[k];
+      }
+    }
+
+    // 2. Build index from remote list
+    const workingMap = new Map<string, BlockedUser>();
+    for (const item of remoteList) {
+      const cleanKey = (item.userId || '').trim().toLowerCase();
+      if (!cleanKey) continue;
+      // If user was recently unblocked, ignore stale remote row
+      if (recentlyUnblocked[cleanKey]) {
+        continue;
+      }
+      workingMap.set(cleanKey, item);
+    }
+
+    // 3. For any user in recentlyBlocked, ensure they exist in workingMap
+    for (const [cleanKey, record] of Object.entries(recentlyBlocked)) {
+      if (!workingMap.has(cleanKey)) {
+        // Remote hasn't caught up yet; inject local block
+        workingMap.set(cleanKey, record.blockedUser);
+      } else {
+        // Remote now includes this blocked user; we can safely clear from recent buffer
+        delete recentlyBlocked[cleanKey];
+      }
+    }
+
+    // Persist cleaned up buffers
+    this.saveRecentlyBlocked(recentlyBlocked);
+    this.saveRecentlyUnblocked(recentlyUnblocked);
+
+    return Array.from(workingMap.values());
+  },
+
+  /**
    * Get all Blocked Users from memory or localStorage
    */
   getBlockedUsers(): BlockedUser[] {
@@ -579,8 +694,16 @@ export const adminSheetService = {
   isUserBlocked(identifier: string): boolean {
     if (!identifier) return false;
     const clean = identifier.trim().toLowerCase();
+    const cleanPrefix = clean.includes('@') ? clean.split('@')[0].trim() : '';
     const blockedList = this.getBlockedUsers();
-    return blockedList.some((b) => (b.userId || '').trim().toLowerCase() === clean);
+    return blockedList.some((b) => {
+      const bId = (b.userId || '').trim().toLowerCase();
+      if (!bId) return false;
+      if (bId === clean) return true;
+      if (cleanPrefix && bId === cleanPrefix) return true;
+      if (bId.includes('@') && bId.split('@')[0].trim() === clean) return true;
+      return false;
+    });
   },
 
   /**
@@ -592,32 +715,85 @@ export const adminSheetService = {
       .map((id) => id.trim().toLowerCase());
     if (cleanList.length === 0) return null;
 
+    const searchSet = new Set<string>();
+    for (const id of cleanList) {
+      searchSet.add(id);
+      if (id.includes('@')) {
+        const prefix = id.split('@')[0].trim();
+        if (prefix) searchSet.add(prefix);
+      }
+    }
+
     const blockedList = this.getBlockedUsers();
     for (const b of blockedList) {
       const bId = (b.userId || '').trim().toLowerCase();
       if (!bId) continue;
-      if (cleanList.includes(bId)) {
+      if (searchSet.has(bId)) {
         return b;
+      }
+      if (bId.includes('@')) {
+        const bPrefix = bId.split('@')[0].trim();
+        if (bPrefix && searchSet.has(bPrefix)) {
+          return b;
+        }
       }
     }
     return null;
   },
 
   /**
-   * Fetch live blocked users list with GViz fast-path & Apps Script failover
+   * Fetch live blocked users list with Apps Script direct query, GViz fast-path & local reconciliation
    */
   async fetchBlockedUsers(force = false): Promise<BlockedUser[]> {
     const now = Date.now();
-    if (!force && this._cachedBlockedUsers && now - this._lastBlockedUsersFetch < 8000) {
+    if (!force && this._cachedBlockedUsers && now - this._lastBlockedUsersFetch < 5000) {
       return this._cachedBlockedUsers;
     }
 
     const adminSheetId = ADMIN_SPREADSHEET_ID;
-    const isDev = import.meta.env.DEV;
+    const scriptUrl = this.getScriptUrl();
 
-    // Fast-path: Direct GViz CSV fetch for 'BlockedUsers' tab
+    // 1. When forced, try Apps Script Web App directly first (reads Spreadsheet database with 0s CDN cache)
+    if (force && scriptUrl) {
+      try {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 3500);
+        const url = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}action=GET_BLOCKED_USERS&spreadsheetId=${adminSheetId}`;
+        const response = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(tid);
+
+        if (response.ok) {
+          const json = await response.json();
+          if (json.success && Array.isArray(json.blocked)) {
+            const rawRows = json.blocked;
+            const parsed: BlockedUser[] = [];
+            const startIndex = rawRows.length > 0 && String(rawRows[0][1]).toLowerCase().includes('user') ? 1 : 0;
+            for (let i = startIndex; i < rawRows.length; i++) {
+              const r = rawRows[i];
+              if (!r || !r[1]) continue;
+              parsed.push({
+                timestamp: r[0] ? new Date(r[0]).toISOString() : new Date().toISOString(),
+                userId: String(r[1]).trim(),
+                studentName: r[2] ? String(r[2]).trim() : undefined,
+                reason: r[3] ? String(r[3]).trim() : undefined,
+                blockedBy: r[4] ? String(r[4]).trim() : undefined,
+              });
+            }
+            parsed.reverse();
+            const reconciled = this.reconcileBlockedUsers(parsed);
+            this.setBlockedUsers(reconciled);
+            return reconciled;
+          }
+        }
+      } catch (err) {
+        // Fail over to GViz
+      }
+    }
+
+    // 2. Direct GViz CSV fetch for 'BlockedUsers' tab (~150ms fast-path)
     if (adminSheetId) {
       try {
+        const isDev = import.meta.env.DEV;
         const gvizUrl = isDev
           ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('BlockedUsers')}&headers=1`
           : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('BlockedUsers')}&headers=1`;
@@ -644,8 +820,9 @@ export const adminSheetService = {
               });
             }
             parsed.reverse();
-            this.setBlockedUsers(parsed);
-            return parsed;
+            const reconciled = this.reconcileBlockedUsers(parsed);
+            this.setBlockedUsers(reconciled);
+            return reconciled;
           }
         }
       } catch (gErr) {
@@ -653,44 +830,13 @@ export const adminSheetService = {
       }
     }
 
-    // Apps Script failover
-    const scriptUrl = this.getScriptUrl();
-    if (scriptUrl) {
-      try {
-        const ctrl = new AbortController();
-        const tid = setTimeout(() => ctrl.abort(), 3500);
-        const url = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}action=GET_BLOCKED_USERS&spreadsheetId=${adminSheetId}`;
-        const response = await fetch(url, { signal: ctrl.signal });
-        clearTimeout(tid);
-
-        if (response.ok) {
-          const json = await response.json();
-          if (json.success && Array.isArray(json.blocked)) {
-            const rawRows = json.blocked;
-            const parsed: BlockedUser[] = [];
-            const startIndex = rawRows.length > 0 && String(rawRows[0][1]).toLowerCase().includes('user') ? 1 : 0;
-            for (let i = startIndex; i < rawRows.length; i++) {
-              const r = rawRows[i];
-              if (!r || !r[1]) continue;
-              parsed.push({
-                timestamp: r[0] ? new Date(r[0]).toISOString() : new Date().toISOString(),
-                userId: String(r[1]).trim(),
-                studentName: r[2] ? String(r[2]).trim() : undefined,
-                reason: r[3] ? String(r[3]).trim() : undefined,
-                blockedBy: r[4] ? String(r[4]).trim() : undefined,
-              });
-            }
-            parsed.reverse();
-            this.setBlockedUsers(parsed);
-            return parsed;
-          }
-        }
-      } catch (err) {
-        console.warn('Apps Script fetchBlockedUsers error:', err);
-      }
+    // 3. Fallback: Local state with reconciliation
+    const current = this.getBlockedUsers();
+    const reconciled = this.reconcileBlockedUsers(current);
+    if (reconciled.length !== current.length) {
+      this.setBlockedUsers(reconciled);
     }
-
-    return this.getBlockedUsers();
+    return reconciled;
   },
 
   /**
@@ -706,6 +852,7 @@ export const adminSheetService = {
     if (!cleanId) {
       return { success: false, error: 'User ID is required.' };
     }
+    const cleanKey = cleanId.toLowerCase();
 
     const newBlocked: BlockedUser = {
       timestamp: new Date().toISOString(),
@@ -715,9 +862,18 @@ export const adminSheetService = {
       blockedBy: data.blockedBy?.trim() || this.getAdminUser()?.name || 'Administrator',
     };
 
+    // Update reconciliation buffers
+    const recentlyBlocked = this.getRecentlyBlocked();
+    recentlyBlocked[cleanKey] = { blockedUser: newBlocked, timestamp: Date.now() };
+    this.saveRecentlyBlocked(recentlyBlocked);
+
+    const recentlyUnblocked = this.getRecentlyUnblocked();
+    delete recentlyUnblocked[cleanKey];
+    this.saveRecentlyUnblocked(recentlyUnblocked);
+
     // Optimistically update local state immediately
     const current = this.getBlockedUsers();
-    const updated = [newBlocked, ...current.filter((b) => b.userId.toLowerCase() !== cleanId.toLowerCase())];
+    const updated = [newBlocked, ...current.filter((b) => (b.userId || '').trim().toLowerCase() !== cleanKey)];
     this.setBlockedUsers(updated);
 
     const scriptUrl = this.getScriptUrl();
@@ -769,12 +925,22 @@ export const adminSheetService = {
    * Unblock a User ID (removes row from 'BlockedUsers' tab)
    */
   async unblockUser(userId: string): Promise<{ success: boolean; error?: string }> {
-    const cleanId = (userId || '').trim().toLowerCase();
+    const cleanId = (userId || '').trim();
     if (!cleanId) return { success: false, error: 'User ID is required' };
+    const cleanKey = cleanId.toLowerCase();
+
+    // Update reconciliation buffers
+    const recentlyUnblocked = this.getRecentlyUnblocked();
+    recentlyUnblocked[cleanKey] = Date.now();
+    this.saveRecentlyUnblocked(recentlyUnblocked);
+
+    const recentlyBlocked = this.getRecentlyBlocked();
+    delete recentlyBlocked[cleanKey];
+    this.saveRecentlyBlocked(recentlyBlocked);
 
     // Optimistically update local state immediately
     const current = this.getBlockedUsers();
-    const updated = current.filter((b) => (b.userId || '').trim().toLowerCase() !== cleanId);
+    const updated = current.filter((b) => (b.userId || '').trim().toLowerCase() !== cleanKey);
     this.setBlockedUsers(updated);
 
     const scriptUrl = this.getScriptUrl();

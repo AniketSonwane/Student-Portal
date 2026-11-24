@@ -74,12 +74,13 @@ export const NoticesPage: React.FC = () => {
     }
   };
 
-  // Format date time
+  // Format date time in Indian Standard Time (IST)
   const formatDateTime = (isoString: string) => {
     try {
       const d = new Date(isoString);
       if (isNaN(d.getTime())) return isoString;
       return d.toLocaleDateString('en-US', {
+        timeZone: 'Asia/Kolkata',
         month: 'short',
         day: 'numeric',
         year: 'numeric',

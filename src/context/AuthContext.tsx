@@ -3,6 +3,7 @@ import { AuthState, Student } from '../types/auth';
 import { authService } from '../services/auth';
 import { adminSheetService } from '../services/adminSheetService';
 import { PortalSettings } from '../types/admin';
+import { ROUTES } from '../utils/constants';
 
 interface AuthContextType extends AuthState {
   loginWithGoogle: (credential: string, emailHint?: string, profilePictureUrl?: string) => Promise<{ success: boolean; isAdmin?: boolean; error?: string }>;
@@ -35,7 +36,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const checkPortalLock = async (force = false): Promise<boolean> => {
     try {
-      const settings = await adminSheetService.fetchLiveSettings(force);
+      const [settings] = await Promise.all([
+        adminSheetService.fetchLiveSettings(force),
+        adminSheetService.fetchBlockedUsers(force),
+      ]);
       setIsPortalLocked(settings.is_locked);
       setLockReason(settings.lock_reason || null);
 
@@ -53,10 +57,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isLoading: false,
             error: settings.lock_reason || 'The portal is currently locked for maintenance by the administrator.',
           });
+          if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
+            window.location.replace(ROUTES.LOGIN);
+          }
         }
       }
 
-      // Check if logged in student has been blocked
+      // Check if logged in student has been blocked - immediately terminate session
       if (!isInspecting && !isAdmin) {
         const student = authService.getCurrentStudent();
         if (student) {
@@ -68,16 +75,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             student.google_email,
           ]);
           if (blocked) {
+            const reasonMsg = blocked.reason
+              ? `Your account (${blocked.userId}) has been blocked by administrator: "${blocked.reason}".`
+              : `Your account (${blocked.userId}) has been blocked by administrator.`;
+            try {
+              sessionStorage.setItem('student_portal_blocked_reason', reasonMsg);
+            } catch {}
+
             authService.logout();
             setState({
               user: null,
               token: null,
               isAuthenticated: false,
               isLoading: false,
-              error: blocked.reason
-                ? `Your account (${blocked.userId}) has been blocked by administrator: "${blocked.reason}".`
-                : `Your account (${blocked.userId}) has been blocked by administrator.`,
+              error: reasonMsg,
             });
+
+            if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
+              window.location.replace(ROUTES.LOGIN);
+            }
             return true;
           }
         }
@@ -89,7 +105,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    // Initial fetch of live settings on load
+    // Initial fetch of live settings and blocked users on load
     checkPortalLock(true);
 
     const handlePortalSettingsChanged = (e: Event) => {
@@ -108,6 +124,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isLoading: false,
             error: customEvt.detail.lock_reason || 'The portal is currently locked for maintenance by the administrator.',
           });
+          if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
+            window.location.replace(ROUTES.LOGIN);
+          }
         }
       }
     };
@@ -125,10 +144,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     window.addEventListener('storage', handleStorage);
 
-    // Periodic live lock check every 4 seconds so maintenance activates in real-time
+    // Periodic live lock and block check every 3 seconds so blocks and maintenance activate in real-time
     const lockTimer = setInterval(() => {
       checkPortalLock(true);
-    }, 4000);
+    }, 3000);
 
     return () => {
       clearInterval(lockTimer);
@@ -144,6 +163,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const token = authService.getToken();
 
       if (student && token) {
+        const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+        const isAdmin = adminSheetService.isAdminAuthenticated();
+
+        // Verify student is not blocked before activating session
+        if (!isInspecting && !isAdmin) {
+          const blocked = adminSheetService.checkIfStudentIsBlocked([
+            student.student_id,
+            student.usn,
+            student.college_email,
+            student.personal_email,
+            student.google_email,
+          ]);
+          if (blocked) {
+            const reasonMsg = blocked.reason
+              ? `Your account (${blocked.userId}) has been blocked by administrator: "${blocked.reason}".`
+              : `Your account (${blocked.userId}) has been blocked by administrator.`;
+            try {
+              sessionStorage.setItem('student_portal_blocked_reason', reasonMsg);
+            } catch {}
+            authService.logout();
+            setState({
+              user: null,
+              token: null,
+              isAuthenticated: false,
+              isLoading: false,
+              error: reasonMsg,
+            });
+            if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
+              window.location.replace(ROUTES.LOGIN);
+            }
+            return;
+          }
+        }
+
         // If an active session exists without an explicit login timestamp, initialize it now
         if (!authService.getLoginTime()) {
           authService.setLoginTime();

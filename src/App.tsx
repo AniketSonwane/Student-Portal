@@ -22,6 +22,7 @@ import { Footer } from './components/layout/Footer';
 import { AdminInspectionBanner } from './components/layout/AdminInspectionBanner';
 import { ScrollToTop } from './components/common/ScrollToTop';
 import { adminSheetService } from './services/adminSheetService';
+import { authService } from './services/auth';
 import { ROUTES } from './utils/constants';
 
 // Protected Route Guard
@@ -42,6 +43,30 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   // If portal is locked and user is not an administrator / inspecting, redirect to login
   if (isPortalLocked && !isInspecting && !isAdmin) {
     return <Navigate to={ROUTES.LOGIN} replace />;
+  }
+
+  // If student is blocked, immediately terminate session and redirect to login
+  if (!isInspecting && !isAdmin) {
+    const student = authService.getCurrentStudent();
+    if (student) {
+      const blocked = adminSheetService.checkIfStudentIsBlocked([
+        student.student_id,
+        student.usn,
+        student.college_email,
+        student.personal_email,
+        student.google_email,
+      ]);
+      if (blocked) {
+        const reasonMsg = blocked.reason
+          ? `Your account (${blocked.userId}) has been blocked by administrator: "${blocked.reason}".`
+          : `Your account (${blocked.userId}) has been blocked by administrator.`;
+        try {
+          sessionStorage.setItem('student_portal_blocked_reason', reasonMsg);
+        } catch {}
+        authService.logout();
+        return <Navigate to={ROUTES.LOGIN} replace />;
+      }
+    }
   }
 
   if (!isAuthenticated) {

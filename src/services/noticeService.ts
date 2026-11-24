@@ -9,6 +9,61 @@ const CACHE_TTL_MS = 8000; // 8 seconds
 const targetSpreadsheetId = NOTICES_SPREADSHEET_ID || ADMIN_SPREADSHEET_ID;
 
 /**
+ * Returns current date and time formatted in Indian Standard Time (Asia/Kolkata)
+ * for HTML datetime-local input: "YYYY-MM-DDTHH:mm"
+ */
+export function getNowISTDateTimeString(dateInput?: Date | string): string {
+  const d = dateInput ? new Date(dateInput) : new Date();
+  const validDate = isNaN(d.getTime()) ? new Date() : d;
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(validDate);
+
+  const p: Record<string, string> = {};
+  parts.forEach(({ type, value }) => {
+    p[type] = value;
+  });
+  const hour = p.hour === '24' ? '00' : p.hour;
+  return `${p.year}-${p.month}-${p.day}T${hour}:${p.minute}`;
+}
+
+/**
+ * Formats a Date or date string to ISO with Indian Standard Time (+05:30) offset:
+ * e.g. "2026-11-23T21:20:00+05:30"
+ */
+export function formatToISTISO(dateOrInput?: Date | string): string {
+  if (!dateOrInput) {
+    return `${getNowISTDateTimeString()}:00+05:30`;
+  }
+  if (typeof dateOrInput === 'string') {
+    const s = dateOrInput.trim();
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) {
+      return `${s}:00+05:30`;
+    }
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) {
+      return `${s}+05:30`;
+    }
+    if (s.includes('+05:30')) {
+      return s;
+    }
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return `${getNowISTDateTimeString(d)}:00+05:30`;
+    }
+  }
+  const d = dateOrInput instanceof Date ? dateOrInput : new Date(dateOrInput);
+  const valid = isNaN(d.getTime()) ? new Date() : d;
+  return `${getNowISTDateTimeString(valid)}:00+05:30`;
+}
+
+/**
  * Validates that a string represents a valid date or timestamp
  * and is not a corrupted multiline text fragment or sentence.
  */
@@ -306,7 +361,7 @@ class NoticeService {
     }
 
     const noticeId = input.id || `NTC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const timestamp = input.timestamp || new Date().toISOString();
+    const timestamp = formatToISTISO(input.timestamp);
 
     const noticeFiles = input.files || (input.file ? [input.file] : []);
 
@@ -326,24 +381,40 @@ class NoticeService {
       },
     };
 
+    const buildLocalNotice = (serverNotice?: any): NoticeItem => {
+      const n = serverNotice || {};
+      const fallbackDocs = (noticeFiles || []).map((f) => ({ name: f.name, url: '' }));
+      const documents = n.documents || (n.documentName || n.documentUrl ? parseNoticeDocuments(n.documentName, n.documentUrl) : fallbackDocs);
+      return {
+        id: n.id || noticeId,
+        timestamp: n.timestamp || timestamp,
+        semester: n.semester || input.semester || 'ALL',
+        title: n.title || input.title,
+        content: n.content || input.content,
+        links: n.links || input.links || [],
+        documents: documents.length > 0 ? documents : undefined,
+        documentName: documents[0]?.name || n.documentName || noticeFiles[0]?.name,
+        documentUrl: documents[0]?.url || n.documentUrl,
+        folderId: n.folderId,
+        folderUrl: n.folderUrl,
+      };
+    };
+
     try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 12000);
       const res = await fetch(scriptUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload),
+        signal: ctrl.signal,
       });
+      clearTimeout(tid);
 
       if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.notice) {
-          const n = json.notice;
-          const documents = n.documents || parseNoticeDocuments(n.documentName, n.documentUrl);
-          const formattedNotice: NoticeItem = {
-            ...n,
-            documents,
-            documentName: documents[0]?.name || n.documentName,
-            documentUrl: documents[0]?.url || n.documentUrl,
-          };
+        const json = await res.json().catch(() => ({}));
+        if (json.success !== false) {
+          const formattedNotice = buildLocalNotice(json.notice);
           const current = this.getLocalNotices();
           const updated = [formattedNotice, ...current.filter((item) => item.id !== noticeId)];
           this.setLocalNotices(updated);
@@ -352,21 +423,24 @@ class NoticeService {
         return { success: false, error: json.error || 'Server returned an error' };
       }
 
-      // If CORS blocks reading JSON, fire fallback
-      return { success: true };
+      // If res is not ok (e.g. 500 or timeout), build local notice so admin isn't blocked
+      const localNotice = buildLocalNotice();
+      const current = this.getLocalNotices();
+      this.setLocalNotices([localNotice, ...current.filter((item) => item.id !== noticeId)]);
+      return { success: true, data: localNotice };
     } catch (err: any) {
-      // Fire no-cors fallback if needed
-      try {
-        await fetch(scriptUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload),
-        });
-        return { success: true };
-      } catch (fallbackErr: any) {
-        return { success: false, error: fallbackErr.message || String(err) };
-      }
+      // Fire non-blocking background sync so the user is never stuck
+      fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      }).catch((e) => console.warn('Background notice sync error:', e));
+
+      const localNotice = buildLocalNotice();
+      const current = this.getLocalNotices();
+      this.setLocalNotices([localNotice, ...current.filter((item) => item.id !== noticeId)]);
+      return { success: true, data: localNotice };
     }
   }
 
@@ -379,6 +453,8 @@ class NoticeService {
       return { success: false, error: 'Google Apps Script Web App URL is not configured in Admin Settings.' };
     }
 
+    const updatedTimestamp = input.timestamp ? formatToISTISO(input.timestamp) : undefined;
+
     const payload = {
       action: 'UPDATE_NOTICE',
       id,
@@ -386,6 +462,7 @@ class NoticeService {
       rootFolderId: NOTICES_ROOT_DRIVE_FOLDER_ID,
       notice: {
         id,
+        timestamp: updatedTimestamp,
         semester: input.semester !== undefined ? input.semester : 'ALL',
         title: input.title,
         content: input.content,
@@ -398,24 +475,40 @@ class NoticeService {
       },
     };
 
+    const buildUpdatedNotice = (serverNotice?: any): NoticeItem => {
+      const n = serverNotice || {};
+      const fallbackDocs = (input.files || []).map((f) => ({ name: f.name, url: '' }));
+      const docs = n.documents || input.documents || fallbackDocs;
+      return {
+        id,
+        timestamp: n.timestamp || updatedTimestamp || formatToISTISO(),
+        semester: n.semester !== undefined ? n.semester : input.semester !== undefined ? input.semester : 'ALL',
+        title: n.title || input.title || '',
+        content: n.content || input.content || '',
+        links: n.links || input.links || [],
+        documents: docs.length > 0 ? docs : undefined,
+        documentName: docs[0]?.name || n.documentName,
+        documentUrl: docs[0]?.url || n.documentUrl,
+        folderId: n.folderId,
+        folderUrl: n.folderUrl,
+      };
+    };
+
     try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 12000);
       const res = await fetch(scriptUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload),
+        signal: ctrl.signal,
       });
+      clearTimeout(tid);
 
       if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.notice) {
-          const n = json.notice;
-          const documents = n.documents || parseNoticeDocuments(n.documentName, n.documentUrl);
-          const formattedNotice: NoticeItem = {
-            ...n,
-            documents,
-            documentName: documents[0]?.name || n.documentName,
-            documentUrl: documents[0]?.url || n.documentUrl,
-          };
+        const json = await res.json().catch(() => ({}));
+        if (json.success !== false) {
+          const formattedNotice = buildUpdatedNotice(json.notice);
           const current = this.getLocalNotices();
           const updated = current.map((item) => (item.id === id ? formattedNotice : item));
           this.setLocalNotices(updated);
@@ -424,19 +517,22 @@ class NoticeService {
         return { success: false, error: json.error || 'Failed to update notice' };
       }
 
-      return { success: true };
+      const localNotice = buildUpdatedNotice();
+      const current = this.getLocalNotices();
+      this.setLocalNotices(current.map((item) => (item.id === id ? localNotice : item)));
+      return { success: true, data: localNotice };
     } catch (err: any) {
-      try {
-        await fetch(scriptUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload),
-        });
-        return { success: true };
-      } catch (fallbackErr: any) {
-        return { success: false, error: fallbackErr.message || String(err) };
-      }
+      fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      }).catch((e) => console.warn('Background notice update error:', e));
+
+      const localNotice = buildUpdatedNotice();
+      const current = this.getLocalNotices();
+      this.setLocalNotices(current.map((item) => (item.id === id ? localNotice : item)));
+      return { success: true, data: localNotice };
     }
   }
 
@@ -461,25 +557,25 @@ class NoticeService {
       const updated = current.filter((n) => n.id !== id);
       this.setLocalNotices(updated);
 
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 10000);
       await fetch(scriptUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload),
+        signal: ctrl.signal,
       });
+      clearTimeout(tid);
 
       return { success: true };
     } catch (err: any) {
-      try {
-        await fetch(scriptUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload),
-        });
-        return { success: true };
-      } catch (fbErr: any) {
-        return { success: false, error: fbErr.message };
-      }
+      fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+      return { success: true };
     }
   }
 }

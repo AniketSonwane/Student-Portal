@@ -127,7 +127,6 @@ export const semesterDataService = {
 
     [
       envDrive,
-      'https://script.google.com/macros/s/AKfycbxvk9iAk3N0aTq337_sJIdBJgAWqWXJy8YWzSGGBRCD4hkKidtSRp2pKA6d2Z4Nuwh9KQ/exec',
       envAdmin,
       envTimetable,
       storedAdmin,

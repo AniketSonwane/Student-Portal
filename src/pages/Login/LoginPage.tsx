@@ -40,6 +40,14 @@ export const LoginPage: React.FC = () => {
 
   // Preload lock status (forced refresh) and warm up student directory in background on mount
   useEffect(() => {
+    try {
+      const blockedMsg = sessionStorage.getItem('student_portal_blocked_reason');
+      if (blockedMsg) {
+        setLocalError(blockedMsg);
+        sessionStorage.removeItem('student_portal_blocked_reason');
+      }
+    } catch {}
+
     checkPortalLock(true);
     profileService.fetchAllStudents(false);
 
@@ -312,6 +320,8 @@ export const LoginPage: React.FC = () => {
                       {(localError || error || '').toLowerCase().includes('lock') ||
                       (localError || error || '').toLowerCase().includes('maintenance')
                         ? 'Portal Locked'
+                        : (localError || error || '').toLowerCase().includes('blocked')
+                        ? 'Account Access Blocked'
                         : 'Sign-In Notice'}
                     </p>
                     <p className="leading-relaxed text-slate-700 dark:text-slate-300 break-words">

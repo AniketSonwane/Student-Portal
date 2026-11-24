@@ -36,7 +36,7 @@ import { adminSheetService } from '../../services/adminSheetService';
 import { profileService } from '../../services/profile';
 import { timetableService, DAYS_OF_WEEK, TIMETABLE_TIMINGS_PRESETS } from '../../services/timetable';
 import { examDatesService } from '../../services/examDates';
-import { noticeService } from '../../services/noticeService';
+import { noticeService, getNowISTDateTimeString, formatToISTISO } from '../../services/noticeService';
 import { semesterDataService, SemesterDriveFile, formatFileSize } from '../../services/semesterData';
 import { DaySchedule, LectureItem, DayName } from '../../types/timetable';
 import { ExamDateItem, ExamType } from '../../types/exam';
@@ -143,6 +143,7 @@ export const AdminPortalPage: React.FC = () => {
   const [newNoticeId, setNewNoticeId] = useState<string>(
     () => `NTC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`
   );
+  const [newNoticeDateTime, setNewNoticeDateTime] = useState<string>(() => getNowISTDateTimeString());
   const [newNoticeSemester, setNewNoticeSemester] = useState<'ALL' | number>('ALL');
   const [newNoticeTitle, setNewNoticeTitle] = useState<string>('');
   const [newNoticeContent, setNewNoticeContent] = useState<string>('');
@@ -151,6 +152,7 @@ export const AdminPortalPage: React.FC = () => {
 
   // Editing existing Notice
   const [editingNoticeId, setEditingNoticeId] = useState<string | null>(null);
+  const [editNoticeDateTime, setEditNoticeDateTime] = useState<string>(() => getNowISTDateTimeString());
   const [editNoticeSemester, setEditNoticeSemester] = useState<'ALL' | number>('ALL');
   const [editNoticeTitle, setEditNoticeTitle] = useState<string>('');
   const [editNoticeContent, setEditNoticeContent] = useState<string>('');
@@ -616,30 +618,88 @@ export const AdminPortalPage: React.FC = () => {
     setAllExamDates((prev) => prev.filter((e) => e.id !== id));
   };
 
-  const handleNoticeFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    Array.from(files).forEach((file) => {
-      if (file.size > 20 * 1024 * 1024) {
-        alert(`Selected file "${file.name}" is larger than 20MB. Please choose a file smaller than 20MB.`);
+  const compressImageFile = (file: File): Promise<{ name: string; type: string; base64: string }> => {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          resolve({
+            name: file.name,
+            type: file.type || 'application/octet-stream',
+            base64: reader.result as string,
+          });
+        };
+        reader.onerror = () => resolve({ name: file.name, type: file.type, base64: '' });
+        reader.readAsDataURL(file);
         return;
       }
 
       const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        setNewNoticeFiles((prev) => [
-          ...prev,
-          {
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const MAX_DIMENSION = 1600;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+            if (width > height) {
+              height = Math.round((height * MAX_DIMENSION) / width);
+              width = MAX_DIMENSION;
+            } else {
+              width = Math.round((width * MAX_DIMENSION) / height);
+              height = MAX_DIMENSION;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const mime = file.type === 'image/png' ? 'image/jpeg' : file.type;
+            const compressedBase64 = canvas.toDataURL(mime, 0.82);
+            resolve({
+              name: file.name,
+              type: mime,
+              base64: compressedBase64,
+            });
+          } else {
+            resolve({
+              name: file.name,
+              type: file.type,
+              base64: e.target?.result as string,
+            });
+          }
+        };
+        img.onerror = () => {
+          resolve({
             name: file.name,
-            type: file.type || 'application/octet-stream',
-            base64,
-          },
-        ]);
+            type: file.type,
+            base64: e.target?.result as string,
+          });
+        };
+        img.src = e.target?.result as string;
       };
       reader.readAsDataURL(file);
     });
+  };
+
+  const handleNoticeFilesChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/') && file.size > 4 * 1024 * 1024) {
+        alert(`Selected document "${file.name}" is larger than 4MB. Please choose or optimize a file smaller than 4MB.`);
+        continue;
+      }
+      const item = await compressImageFile(file);
+      if (item.base64) {
+        setNewNoticeFiles((prev) => [...prev, item]);
+      }
+    }
 
     e.target.value = '';
   };
@@ -658,50 +718,57 @@ export const AdminPortalPage: React.FC = () => {
     setIsPublishingNotice(true);
     setNoticeError('');
 
-    const parsedLinks = newNoticeLinks
-      .split(/[\n,]/)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0)
-      .map((l) => (l.startsWith('http://') || l.startsWith('https://') ? l : `https://${l}`));
+    try {
+      const parsedLinks = newNoticeLinks
+        .split(/[\n,]/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0)
+        .map((l) => (l.startsWith('http://') || l.startsWith('https://') ? l : `https://${l}`));
 
-    const res = await noticeService.createNotice({
-      id: newNoticeId.trim() || undefined,
-      semester: newNoticeSemester,
-      title: newNoticeTitle.trim(),
-      content: newNoticeContent.trim(),
-      links: parsedLinks,
-      files: newNoticeFiles,
-    });
+      const res = await noticeService.createNotice({
+        id: newNoticeId.trim() || undefined,
+        timestamp: formatToISTISO(newNoticeDateTime),
+        semester: newNoticeSemester,
+        title: newNoticeTitle.trim(),
+        content: newNoticeContent.trim(),
+        links: parsedLinks,
+        files: newNoticeFiles,
+      });
 
-    setIsPublishingNotice(false);
+      if (res.success) {
+        setNoticePublishSuccess(true);
+        if (res.data) {
+          setAllNotices((prev) => [res.data!, ...prev.filter((n) => n.id !== res.data!.id)]);
+        } else {
+          noticeService.fetchNotices(true).then((r) => {
+            if (r.data) setAllNotices(r.data);
+          });
+        }
 
-    if (res.success) {
-      setNoticePublishSuccess(true);
-      if (res.data) {
-        setAllNotices((prev) => [res.data!, ...prev.filter((n) => n.id !== res.data!.id)]);
+        setNewNoticeSemester('ALL');
+        setNewNoticeDateTime(getNowISTDateTimeString());
+        setNewNoticeTitle('');
+        setNewNoticeContent('');
+        setNewNoticeLinks('');
+        setNewNoticeFiles([]);
+        setShowAddNoticeRow(false);
+        setNewNoticeId(
+          `NTC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`
+        );
+        setTimeout(() => setNoticePublishSuccess(false), 4000);
       } else {
-        noticeService.fetchNotices(true).then((r) => {
-          if (r.data) setAllNotices(r.data);
-        });
+        setNoticeError(res.error || 'Failed to publish notice. Check your Google Apps Script configuration.');
       }
-
-      setNewNoticeSemester('ALL');
-      setNewNoticeTitle('');
-      setNewNoticeContent('');
-      setNewNoticeLinks('');
-      setNewNoticeFiles([]);
-      setShowAddNoticeRow(false);
-      setNewNoticeId(
-        `NTC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`
-      );
-      setTimeout(() => setNoticePublishSuccess(false), 4000);
-    } else {
-      setNoticeError(res.error || 'Failed to publish notice. Check your Google Apps Script configuration.');
+    } catch (err: any) {
+      setNoticeError(err?.message || 'Unexpected error while publishing notice.');
+    } finally {
+      setIsPublishingNotice(false);
     }
   };
 
   const handleStartEditNotice = (n: NoticeItem) => {
     setEditingNoticeId(n.id);
+    setEditNoticeDateTime(getNowISTDateTimeString(n.timestamp));
     setEditNoticeSemester(n.semester !== undefined ? n.semester : 'ALL');
     setEditNoticeTitle(n.title || '');
     setEditNoticeContent(n.content || '');
@@ -731,30 +798,20 @@ export const AdminPortalPage: React.FC = () => {
     setEditNoticeDocuments((prev) => prev.filter((_, idx) => idx !== docIdx));
   };
 
-  const handleEditNoticeFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEditNoticeFilesChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
-      if (file.size > 20 * 1024 * 1024) {
-        alert(`Selected file "${file.name}" is larger than 20MB. Please choose a file smaller than 20MB.`);
-        return;
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/') && file.size > 4 * 1024 * 1024) {
+        alert(`Selected document "${file.name}" is larger than 4MB. Please choose or optimize a file smaller than 4MB.`);
+        continue;
       }
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        setEditNoticeNewFiles((prev) => [
-          ...prev,
-          {
-            name: file.name,
-            type: file.type || 'application/octet-stream',
-            base64,
-          },
-        ]);
-      };
-      reader.readAsDataURL(file);
-    });
+      const item = await compressImageFile(file);
+      if (item.base64) {
+        setEditNoticeNewFiles((prev) => [...prev, item]);
+      }
+    }
 
     e.target.value = '';
   };
@@ -781,7 +838,9 @@ export const AdminPortalPage: React.FC = () => {
       .map((l) => (l.startsWith('http://') || l.startsWith('https://') ? l : `https://${l}`));
 
     try {
+      const updatedTimestamp = formatToISTISO(editNoticeDateTime);
       const res = await noticeService.updateNotice(editingNoticeId, {
+        timestamp: updatedTimestamp,
         semester: editNoticeSemester,
         title: editNoticeTitle.trim(),
         content: editNoticeContent.trim(),
@@ -797,6 +856,7 @@ export const AdminPortalPage: React.FC = () => {
             item.id === editingNoticeId
               ? {
                   ...item,
+                  timestamp: updatedTimestamp,
                   semester: editNoticeSemester,
                   title: editNoticeTitle.trim(),
                   content: editNoticeContent.trim(),
@@ -3383,11 +3443,11 @@ export const AdminPortalPage: React.FC = () => {
                   <h3 className="font-black text-base sm:text-lg text-slate-900 dark:text-white flex items-center gap-2">
                     <span>Notices &amp; Docs Manager</span>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                      Drive + Sheet
+                      Announcements
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Publish announcements, edit notices, upload documents to Drive, and sync instantly with students.
+                    Publish announcements, edit notices, upload documents, and notify students instantly.
                   </p>
                 </div>
               </div>
@@ -3518,7 +3578,7 @@ export const AdminPortalPage: React.FC = () => {
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
                     <div>
                       <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
                         Target Semester *
@@ -3533,6 +3593,30 @@ export const AdminPortalPage: React.FC = () => {
                         <option value="2">Semester 2</option>
                         <option value="3">Semester 3</option>
                       </select>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-blue-500" />
+                          <span>Date &amp; Time (IST) *</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setNewNoticeDateTime(getNowISTDateTimeString())}
+                          className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
+                          title="Reset to Current Indian Standard Time"
+                        >
+                          Set Now
+                        </button>
+                      </div>
+                      <input
+                        type="datetime-local"
+                        value={newNoticeDateTime}
+                        onChange={(e) => setNewNoticeDateTime(e.target.value)}
+                        required
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-[#121218] text-slate-900 dark:text-white text-xs font-semibold"
+                      />
                     </div>
 
                     <div>
@@ -3655,7 +3739,7 @@ export const AdminPortalPage: React.FC = () => {
                       ) : (
                         <>
                           <Plus className="w-3.5 h-3.5" />
-                          <span>Publish Notice to Drive &amp; Sheet</span>
+                          <span>Publish Notice</span>
                         </>
                       )}
                     </button>
@@ -3712,7 +3796,7 @@ export const AdminPortalPage: React.FC = () => {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
                             <div>
                               <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
                                 Target Semester
@@ -3727,6 +3811,30 @@ export const AdminPortalPage: React.FC = () => {
                                 <option value="2">Semester 2</option>
                                 <option value="3">Semester 3</option>
                               </select>
+                            </div>
+
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-blue-500" />
+                                  <span>Date &amp; Time (IST) *</span>
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditNoticeDateTime(getNowISTDateTimeString())}
+                                  className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
+                                  title="Reset to Current Indian Standard Time"
+                                >
+                                  Set Now
+                                </button>
+                              </div>
+                              <input
+                                type="datetime-local"
+                                value={editNoticeDateTime}
+                                onChange={(e) => setEditNoticeDateTime(e.target.value)}
+                                required
+                                className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-[#121218] text-slate-900 dark:text-white text-xs font-semibold"
+                              />
                             </div>
 
                             <div>
@@ -3877,7 +3985,7 @@ export const AdminPortalPage: React.FC = () => {
                               {isUpdatingNotice ? (
                                 <>
                                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                  <span>Saving Timetable...</span>
+                                  <span>Saving Notice...</span>
                                 </>
                               ) : (
                                 <>
@@ -3911,8 +4019,19 @@ export const AdminPortalPage: React.FC = () => {
                             <span className="text-[10px] font-black px-2 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800/40">
                               {!n.semester || n.semester === 'ALL' ? 'All Semesters' : `Sem ${n.semester}`}
                             </span>
-                            <span className="text-xs text-slate-400 font-mono">
-                              {n.timestamp ? new Date(n.timestamp).toLocaleDateString() : ''}
+                            <span className="text-[11px] text-slate-400 font-mono flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-slate-400" />
+                              {n.timestamp
+                                ? new Date(n.timestamp).toLocaleDateString('en-US', {
+                                    timeZone: 'Asia/Kolkata',
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                : ''}{' '}
+                              (IST)
                             </span>
                           </div>
 
@@ -3968,7 +4087,7 @@ export const AdminPortalPage: React.FC = () => {
                             type="button"
                             onClick={() => handleDeleteNotice(n.id)}
                             className="p-2 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-all flex-shrink-0 cursor-pointer"
-                            title="Delete Notice & Trash Drive Folder"
+                            title="Delete Notice"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>

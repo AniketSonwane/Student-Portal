@@ -38,42 +38,41 @@ export const ADMIN_SPREADSHEET_ID =
   (import.meta.env.VITE_GOOGLE_SHEETS_ADMIN_ID as string) || '';
 
 export const NOTICES_SPREADSHEET_ID =
-  (import.meta.env.VITE_GOOGLE_SHEETS_NOTICES_ID as string) ||
-  '1P98kvGpLJcFAVBU6lHyw5Q89uvo0DkJwFZeXDxg8L6w';
+  (import.meta.env.VITE_GOOGLE_SHEETS_NOTICES_ID as string) || '';
 
 export const NOTICES_ROOT_DRIVE_FOLDER_ID =
-  (import.meta.env.VITE_GOOGLE_DRIVE_NOTICES_FOLDER_ID as string) ||
-  '17jq8UKlFV5g3Uopm4z7s395NhuDwwrPk';
-export const NOTICES_ROOT_DRIVE_FOLDER_URL = `https://drive.google.com/drive/folders/${NOTICES_ROOT_DRIVE_FOLDER_ID}`;
+  (import.meta.env.VITE_GOOGLE_DRIVE_NOTICES_FOLDER_ID as string) || '';
+
+export const NOTICES_ROOT_DRIVE_FOLDER_URL = NOTICES_ROOT_DRIVE_FOLDER_ID
+  ? `https://drive.google.com/drive/folders/${NOTICES_ROOT_DRIVE_FOLDER_ID}`
+  : '';
+
+const sem1DriveFolderId = (import.meta.env.VITE_GOOGLE_DRIVE_SEM1_FOLDER_ID as string) || '';
+const sem2DriveFolderId = (import.meta.env.VITE_GOOGLE_DRIVE_SEM2_FOLDER_ID as string) || '';
+const sem3DriveFolderId = (import.meta.env.VITE_GOOGLE_DRIVE_SEM3_FOLDER_ID as string) || '';
 
 export const SEMESTER_DRIVE_FOLDERS: Record<number, { id: string; url: string }> = {
   1: {
-    id:
-      (import.meta.env.VITE_GOOGLE_DRIVE_SEM1_FOLDER_ID as string) ||
-      '1JL4ftUrmq5Pynrc_EQoCTRhID0yBcZ8m',
-    url: 'https://drive.google.com/drive/folders/1JL4ftUrmq5Pynrc_EQoCTRhID0yBcZ8m',
+    id: sem1DriveFolderId,
+    url: sem1DriveFolderId ? `https://drive.google.com/drive/folders/${sem1DriveFolderId}` : '',
   },
   2: {
-    id:
-      (import.meta.env.VITE_GOOGLE_DRIVE_SEM2_FOLDER_ID as string) ||
-      '1NzgznyPWmK4gxX7cYjhqfdyVf93aIy9S',
-    url: 'https://drive.google.com/drive/folders/1NzgznyPWmK4gxX7cYjhqfdyVf93aIy9S',
+    id: sem2DriveFolderId,
+    url: sem2DriveFolderId ? `https://drive.google.com/drive/folders/${sem2DriveFolderId}` : '',
   },
   3: {
-    id:
-      (import.meta.env.VITE_GOOGLE_DRIVE_SEM3_FOLDER_ID as string) ||
-      '1UNcXEgLnjy-eIlsEwnxz9gZ20-Lvlhlu',
-    url: 'https://drive.google.com/drive/folders/1UNcXEgLnjy-eIlsEwnxz9gZ20-Lvlhlu',
+    id: sem3DriveFolderId,
+    url: sem3DriveFolderId ? `https://drive.google.com/drive/folders/${sem3DriveFolderId}` : '',
   },
 };
 
 export const getSemesterDriveFolderId = (sem: number = 3): string => {
-  return SEMESTER_DRIVE_FOLDERS[sem]?.id || SEMESTER_DRIVE_FOLDERS[3].id;
+  return SEMESTER_DRIVE_FOLDERS[sem]?.id || SEMESTER_DRIVE_FOLDERS[3]?.id || '';
 };
 
 export const getSemesterDriveFolderUrl = (sem: number = 3): string => {
-  return SEMESTER_DRIVE_FOLDERS[sem]?.url || SEMESTER_DRIVE_FOLDERS[3].url;
+  return SEMESTER_DRIVE_FOLDERS[sem]?.url || SEMESTER_DRIVE_FOLDERS[3]?.url || '';
 };
 
-export const SEMESTER_DATA_DRIVE_FOLDER_ID = SEMESTER_DRIVE_FOLDERS[3].id;
-export const SEMESTER_DATA_DRIVE_FOLDER_URL = SEMESTER_DRIVE_FOLDERS[3].url;
+export const SEMESTER_DATA_DRIVE_FOLDER_ID = SEMESTER_DRIVE_FOLDERS[3]?.id || '';
+export const SEMESTER_DATA_DRIVE_FOLDER_URL = SEMESTER_DRIVE_FOLDERS[3]?.url || '';

@@ -90,10 +90,12 @@ export const marksService = {
               `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(dSheetName)}`,
             ];
         if (semester === 3) {
-          const sem3DetailsGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_DETAILS_GID as string) || '2700910';
-          detailsEndpoints.push(
-            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3DetailsGid)}`
-          );
+          const sem3DetailsGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_DETAILS_GID as string) || '';
+          if (sem3DetailsGid) {
+            detailsEndpoints.push(
+              `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3DetailsGid)}`
+            );
+          }
         }
         let found = false;
         for (const dUrl of detailsEndpoints) {
@@ -121,7 +123,7 @@ export const marksService = {
     // When semester is 3, also fetch live NPTEL tab for dedicated marks & grades
     let nptelMap: Map<string, { marks?: string; grade?: string }> | undefined = undefined;
     if (semester === 3) {
-      const sem3NptelGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_NPTEL_GID as string) || '1657515727';
+      const sem3NptelGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_NPTEL_GID as string) || '';
       const nptelEndpoints = isDev
         ? [
             `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
@@ -130,8 +132,12 @@ export const marksService = {
         : [
             `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
             `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=NPTEL`,
-            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3NptelGid)}`,
           ];
+      if (sem3NptelGid) {
+        nptelEndpoints.push(
+          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3NptelGid)}`
+        );
+      }
       for (const nUrl of nptelEndpoints) {
         try {
           const controller = new AbortController();
