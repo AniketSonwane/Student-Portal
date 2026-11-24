@@ -587,12 +587,13 @@ export const adminSheetService = {
           params.set('reason', payload.log.reason || '');
         }
         const getUrl = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}${params.toString()}`;
-        // Trigger via image/beacon fire-and-forget or fetch (immune to CORS restrictions)
+        // Reliable direct background fetch with mode: 'no-cors' (guaranteed across domains and content-types)
+        fetch(getUrl, { mode: 'no-cors' }).catch(() => {});
         if (typeof Image !== 'undefined') {
-          const img = new Image();
-          img.src = getUrl;
-        } else {
-          fetch(getUrl, { mode: 'no-cors' }).catch(() => {});
+          try {
+            const img = new Image();
+            img.src = getUrl;
+          } catch {}
         }
       } catch (getErr) {
         console.warn('GET direct write channel failed:', getErr);
