@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 root
+temp
+temp/
 *.local
 
 # Editor directories and files
@@ -26,4 +28,6 @@ root
 
 # Environment variables
 .env
-.env.production
+.env.*
+!.env.example
+
