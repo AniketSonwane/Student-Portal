@@ -121,6 +121,7 @@ export const AdminPortalPage: React.FC = () => {
   const [showManualBlockRow, setShowManualBlockRow] = useState(false);
   const [blockingUserId, setBlockingUserId] = useState<string | null>(null);
   const [blockingStudentName, setBlockingStudentName] = useState<string>('');
+  const [blockingStudentEmail, setBlockingStudentEmail] = useState<string>('');
   const [blockingReasonInput, setBlockingReasonInput] = useState<string>('Administrative hold');
 
   // Change Details Modal state
@@ -920,9 +921,10 @@ export const AdminPortalPage: React.FC = () => {
     }
   };
 
-  const handleStartInlineBlock = (studentId: string, studentName: string) => {
+  const handleStartInlineBlock = (studentId: string, studentName: string, studentEmail?: string) => {
     setBlockingUserId(studentId);
     setBlockingStudentName(studentName);
+    setBlockingStudentEmail(studentEmail || '');
     setBlockingReasonInput('Administrative hold');
     setShowManualBlockRow(false);
   };
@@ -930,6 +932,7 @@ export const AdminPortalPage: React.FC = () => {
   const handleCancelInlineBlock = () => {
     setBlockingUserId(null);
     setBlockingStudentName('');
+    setBlockingStudentEmail('');
   };
 
   const handleConfirmInlineBlock = async (e: React.FormEvent) => {
@@ -938,17 +941,29 @@ export const AdminPortalPage: React.FC = () => {
     setIsSubmittingBlock(true);
     setBlockActionMessage(null);
     try {
+      const reason = blockingReasonInput.trim() || 'Administrative hold';
       const res = await adminSheetService.blockUser({
         userId: blockingUserId,
         studentName: blockingStudentName || undefined,
-        reason: blockingReasonInput.trim() || 'Administrative hold',
+        reason,
         blockedBy: adminUser?.email || 'admin',
       });
+
+      if (blockingStudentEmail && blockingStudentEmail !== blockingUserId) {
+        await adminSheetService.blockUser({
+          userId: blockingStudentEmail,
+          studentName: blockingStudentName || undefined,
+          reason,
+          blockedBy: adminUser?.email || 'admin',
+        });
+      }
+
       if (res.success) {
         setBlockedUsers(adminSheetService.getBlockedUsers());
         setBlockActionMessage(`Student "${blockingStudentName || blockingUserId}" has been blocked.`);
         setTimeout(() => setBlockActionMessage(null), 4000);
         setBlockingUserId(null);
+        setBlockingStudentEmail('');
       } else {
         alert(res.error || 'Failed to block student');
       }
@@ -957,10 +972,13 @@ export const AdminPortalPage: React.FC = () => {
     }
   };
 
-  const handleUnblockStudent = async (identifier: string) => {
+  const handleUnblockStudent = async (identifier: string, altIdentifier?: string) => {
     setIsUnblockingUserId(identifier);
     try {
       const res = await adminSheetService.unblockUser(identifier);
+      if (altIdentifier && altIdentifier !== identifier) {
+        await adminSheetService.unblockUser(altIdentifier);
+      }
       if (res.success) {
         setBlockedUsers(adminSheetService.getBlockedUsers());
         setBlockActionMessage(`User "${identifier}" unblocked.`);
@@ -4510,7 +4528,7 @@ export const AdminPortalPage: React.FC = () => {
                           {st.isBlocked ? (
                             <button
                               type="button"
-                              onClick={() => handleUnblockStudent(st.blockedInfo?.userId || st.id)}
+                              onClick={() => handleUnblockStudent(st.blockedInfo?.userId || st.id, st.email)}
                               disabled={isUnblockingUserId === (st.blockedInfo?.userId || st.id)}
                               className="py-1.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
                             >
@@ -4529,7 +4547,7 @@ export const AdminPortalPage: React.FC = () => {
                           ) : (
                             <button
                               type="button"
-                              onClick={() => handleStartInlineBlock(st.id, st.name)}
+                              onClick={() => handleStartInlineBlock(st.id, st.name, st.email)}
                               className="py-1.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800/60 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
                             >
                               <UserX className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
