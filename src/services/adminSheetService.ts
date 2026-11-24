@@ -555,15 +555,40 @@ export const adminSheetService = {
    */
   async postToScript(payload: Record<string, any>): Promise<{ success: boolean; data?: any; error?: string }> {
     const scriptUrl = this.getScriptUrl();
+    const bodyObj = {
+      spreadsheetId: ADMIN_SPREADSHEET_ID,
+      ...payload,
+    };
+    const bodyStr = JSON.stringify(bodyObj);
+
+    // 1. In production on Netlify, try the serverless proxy endpoint first (/api/admin-proxy)
+    // Server-to-server HTTP POST seamlessly handles Google Apps Script 302 redirects without browser CORS blocks
+    if (typeof window !== 'undefined' && !import.meta.env.DEV) {
+      try {
+        const proxyRes = await fetch('/api/admin-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr,
+        });
+        if (proxyRes.ok) {
+          try {
+            const pJson = await proxyRes.json();
+            if (pJson && pJson.success !== false) {
+              return { success: true, data: pJson };
+            }
+          } catch {}
+          return { success: true };
+        }
+      } catch (proxyErr) {
+        console.warn('Netlify proxy call failed, falling back to direct script URL:', proxyErr);
+      }
+    }
+
     if (!scriptUrl) {
       return { success: false, error: 'No Google Apps Script URL configured.' };
     }
 
-    const bodyStr = JSON.stringify({
-      spreadsheetId: ADMIN_SPREADSHEET_ID,
-      ...payload,
-    });
-
+    // 2. Direct browser fetch to Google Apps Script
     try {
       const res = await fetch(scriptUrl, {
         method: 'POST',
@@ -582,13 +607,12 @@ export const adminSheetService = {
             return { success: false, error: json.error };
           }
         } catch {
-          // If response body is opaque or not JSON, HTTP 200 means Apps Script executed
           return { success: true };
         }
       }
       return { success: true };
     } catch {
-      // Browser blocked CORS redirect header on Netlify: Send via fire-and-forget no-cors
+      // 3. Fallback: Browser blocked CORS on the redirect, send via fire-and-forget no-cors
       try {
         await fetch(scriptUrl, {
           method: 'POST',
