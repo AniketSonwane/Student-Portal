@@ -361,7 +361,8 @@ export const adminSheetService = {
     }
 
     try {
-      const response = await fetch(scriptUrl);
+      const fullUrl = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}spreadsheetId=${ADMIN_SPREADSHEET_ID}`;
+      const response = await fetch(fullUrl);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
