@@ -13,38 +13,36 @@ export interface GlobalCourseSearchResult {
   isCompleted: boolean;
 }
 
-// In-memory cache for loaded semester sheets (populated live from Google Sheets)
-const semesterCache = new Map<number, StudentSemesterMarks[]>();
-
 export const marksService = {
   /**
-   * Fetch all student marks from a semester's Google Sheet Master-Sheet
+   * Fetch all student marks from a semester's Google Sheet Master-Sheet (always live, no caching)
    */
   async fetchSemesterMarks(
     semester: number
   ): Promise<{ success: boolean; data?: StudentSemesterMarks[]; error?: string }> {
-    // 1. Check in-memory cache first
-    if (semesterCache.has(semester)) {
-      return { success: true, data: semesterCache.get(semester)! };
-    }
-
     const config = SEMESTER_SHEETS_CONFIG[semester];
     if (!config || !config.spreadsheetId) {
       return {
         success: false,
-        error: `Semester ${semester} Google Sheet has not been connected yet.`,
+        error: `Semester ${semester} marks record has not been connected yet.`,
       };
     }
 
     const sheetName = config.sheetName || 'Master-Sheet';
     const spreadsheetId = config.spreadsheetId;
 
-    // Try endpoints in order: Vite Dev Proxy -> Direct -> Netlify Function
-    const endpoints = [
-      `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
-      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
-      `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(sheetName)}`,
-    ];
+    // Use Vite proxy first in development (avoids CORS), then direct Google Sheets, then Netlify fallback
+    const isDev = import.meta.env.DEV;
+    const endpoints = isDev
+      ? [
+          `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+        ]
+      : [
+          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+          `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(sheetName)}`,
+          `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+        ];
 
     let csvText: string | null = null;
     let lastError: string = '';
@@ -67,7 +65,7 @@ export const marksService = {
     if (!csvText) {
       return {
         success: false,
-        error: `Unable to fetch Semester ${semester} Master-Sheet from Google Sheets. ${lastError}`.trim(),
+        error: `Unable to load Semester ${semester} examination records. ${lastError}`.trim(),
       };
     }
 
@@ -82,21 +80,30 @@ export const marksService = {
           : ['sem3-details', 'SEM3-Details', 'Sem3-Details', 'Sheet8'];
 
       for (const dSheetName of detailsSheetCandidates) {
-        const detailsEndpoints = [
-          `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
-          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
-          `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(dSheetName)}`,
-        ];
+        const detailsEndpoints = isDev
+          ? [
+              `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
+              `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
+            ]
+          : [
+              `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
+              `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(dSheetName)}`,
+            ];
         if (semester === 3) {
-          detailsEndpoints.push(
-            `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=2700910`,
-            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=2700910`
-          );
+          const sem3DetailsGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_DETAILS_GID as string) || '';
+          if (sem3DetailsGid) {
+            detailsEndpoints.push(
+              `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3DetailsGid)}`
+            );
+          }
         }
         let found = false;
         for (const dUrl of detailsEndpoints) {
           try {
-            const dRes = await fetch(dUrl);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            const dRes = await fetch(dUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
             if (dRes.ok) {
               const dText = await dRes.text();
               if (dText && dText.length > 30 && !dText.includes('<!DOCTYPE html>')) {
@@ -116,16 +123,27 @@ export const marksService = {
     // When semester is 3, also fetch live NPTEL tab for dedicated marks & grades
     let nptelMap: Map<string, { marks?: string; grade?: string }> | undefined = undefined;
     if (semester === 3) {
-      const nptelEndpoints = [
-        `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
-        `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
-        `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=NPTEL`,
-        `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=1657515727`,
-        `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=1657515727`,
-      ];
+      const sem3NptelGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_NPTEL_GID as string) || '';
+      const nptelEndpoints = isDev
+        ? [
+            `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
+            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
+          ]
+        : [
+            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
+            `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=NPTEL`,
+          ];
+      if (sem3NptelGid) {
+        nptelEndpoints.push(
+          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3NptelGid)}`
+        );
+      }
       for (const nUrl of nptelEndpoints) {
         try {
-          const nRes = await fetch(nUrl);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          const nRes = await fetch(nUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
           if (nRes.ok) {
             const nText = await nRes.text();
             if (nText && nText.length > 30 && !nText.includes('<!DOCTYPE html>')) {
@@ -144,22 +162,21 @@ export const marksService = {
       if (parsed.length === 0) {
         return {
           success: false,
-          error: `No valid student records found in Semester ${semester} Master-Sheet.`,
+          error: `No valid student records found in Semester ${semester} records.`,
         };
       }
 
-      semesterCache.set(semester, parsed);
       return { success: true, data: parsed };
     } catch (parseErr: any) {
       return {
         success: false,
-        error: `Failed to parse Semester ${semester} Master-Sheet: ${parseErr?.message || 'Invalid format'}`,
+        error: `Failed to load Semester ${semester} records: ${parseErr?.message || 'Invalid format'}`,
       };
     }
   },
 
   /**
-   * Retrieve official semester marks for a student by USN and semester
+   * Retrieve semester marks for a student by USN and semester
    */
   async getStudentMarks(
     usn: string,
@@ -181,7 +198,7 @@ export const marksService = {
     if (!student) {
       return {
         success: false,
-        error: `No marks record found for USN: ${usn} in Semester ${semester} Master-Sheet.`,
+        error: `No marks record found for USN: ${usn} in Semester ${semester}.`,
       };
     }
 
@@ -245,20 +262,10 @@ export const marksService = {
   },
 
   /**
-   * Get all marks for student selection/inspection
+   * Get all marks for student selection/inspection (fetches live from Google Sheets)
    */
-  getAllMarks(semester: number = 1): StudentSemesterMarks[] {
-    return semesterCache.get(semester) || [];
-  },
-
-  /**
-   * Clear cache (useful when user updates Google Sheet links)
-   */
-  clearCache(semester?: number) {
-    if (semester) {
-      semesterCache.delete(semester);
-    } else {
-      semesterCache.clear();
-    }
+  async getAllMarks(semester: number = 1): Promise<StudentSemesterMarks[]> {
+    const res = await this.fetchSemesterMarks(semester);
+    return res.success && res.data ? res.data : [];
   },
 };

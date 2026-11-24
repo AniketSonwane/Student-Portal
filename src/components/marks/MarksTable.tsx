@@ -106,7 +106,7 @@ export const MarksTable: React.FC<MarksTableProps> = ({
   return (
     <div className="space-y-4">
       {/* Controls Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 rounded-xl bg-white/90 dark:bg-[#0C0C10] border border-slate-200 dark:border-[#222228] shadow-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:p-4 rounded-xl bg-white/90 dark:bg-[#151621] border border-slate-200 dark:border-[#282A3A] shadow-sm">
         {/* Filter Type Pills - Horizontal swipe on mobile */}
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 sm:pb-0 touch-pan-x">
           {(['All', 'Theory', 'Practical', 'Activity'] as const).map((type) => (
@@ -169,7 +169,7 @@ export const MarksTable: React.FC<MarksTableProps> = ({
       {/* Subjects Cards List with Select & Hover Animations */}
       <div className="space-y-2.5 sm:space-y-3">
         {filteredSubjects.length === 0 && (
-          <div className="p-8 text-center rounded-xl bg-white/90 dark:bg-[#0C0C10] border border-slate-200 dark:border-[#222228]">
+          <div className="p-8 text-center rounded-xl bg-white/90 dark:bg-[#151621] border border-slate-200 dark:border-[#282A3A]">
             <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
               No courses matching "{searchQuery}"
             </p>
@@ -204,7 +204,7 @@ export const MarksTable: React.FC<MarksTableProps> = ({
               className={`rounded-xl border transition-all duration-300 ease-out overflow-hidden ${
                 isExpanded
                   ? 'border-[#8048A8] dark:border-[#8048A8] shadow-md dark:shadow-[0_8px_25px_-5px_rgba(128,72,168,0.25)] ring-1 sm:ring-2 ring-[#8048A8]/30 dark:ring-[#8048A8]/40 bg-white dark:bg-[#0A0A0E] animate-select-pulse'
-                  : 'border-slate-200 dark:border-[#222228] bg-white/95 dark:bg-[#0A0A0E] shadow-2xs hover:border-[#8048A8]/50 dark:hover:border-[#8048A8]/60 hover:-translate-y-1 hover:shadow-lg dark:hover:shadow-[0_12px_28px_-6px_rgba(0,0,0,0.7)]'
+                  : 'border-slate-200 dark:border-[#282A3A] bg-white dark:bg-[#151621] shadow-2xs hover:border-[#8048A8]/50 dark:hover:border-[#8048A8]/60 hover:-translate-y-1 hover:shadow-lg dark:hover:shadow-[0_12px_28px_-6px_rgba(0,0,0,0.7)]'
               }`}
             >
               {/* Card Header Row (Clickable) */}
@@ -384,7 +384,7 @@ export const MarksTable: React.FC<MarksTableProps> = ({
         })}
 
         {filteredSubjects.length === 0 && (
-          <div className="p-8 text-center rounded-xl bg-white dark:bg-[#0A0A0E] border border-slate-200 dark:border-[#222228] text-slate-500">
+          <div className="p-8 text-center rounded-xl bg-white dark:bg-[#151621] border border-slate-200 dark:border-[#282A3A] text-slate-500">
             No subjects matched your filter or search query.
           </div>
         )}

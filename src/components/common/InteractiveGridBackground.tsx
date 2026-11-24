@@ -92,10 +92,10 @@ export const InteractiveGridBackground: React.FC = () => {
     function render() {
       if (!ctx) return;
 
-      // 1. Smoothly interpolated pure background (from #F9FAFB to #000000)
-      const bgR = Math.round(249 * (1 - currentThemeVal));
-      const bgG = Math.round(250 * (1 - currentThemeVal));
-      const bgB = Math.round(251 * (1 - currentThemeVal));
+      // 1. Smoothly interpolated background (from #F9FAFB to deep slate-black #0B0C10)
+      const bgR = Math.round(249 * (1 - currentThemeVal) + 11 * currentThemeVal);
+      const bgG = Math.round(250 * (1 - currentThemeVal) + 12 * currentThemeVal);
+      const bgB = Math.round(251 * (1 - currentThemeVal) + 16 * currentThemeVal);
       ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
       ctx.fillRect(0, 0, width, height);
 

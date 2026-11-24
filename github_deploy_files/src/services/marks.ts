@@ -1,0 +1,271 @@
+import { StudentSemesterMarks } from '../types/marks';
+import { SEMESTER_SHEETS_CONFIG, SUPPORTED_SEMESTERS } from '../config/sheetsConfig';
+import { parseMasterSheetCSV, parseSemDetailsCSV, parseNptelCSV, SemDetailsItem } from './sheetParser';
+
+export interface GlobalCourseSearchResult {
+  code: string;
+  name: string;
+  semester: number;
+  type: 'Theory' | 'Practical' | 'Activity';
+  total: string;
+  maxTotal: number;
+  grade: string;
+  isCompleted: boolean;
+}
+
+export const marksService = {
+  /**
+   * Fetch all student marks from a semester's Google Sheet Master-Sheet (always live, no caching)
+   */
+  async fetchSemesterMarks(
+    semester: number
+  ): Promise<{ success: boolean; data?: StudentSemesterMarks[]; error?: string }> {
+    const config = SEMESTER_SHEETS_CONFIG[semester];
+    if (!config || !config.spreadsheetId) {
+      return {
+        success: false,
+        error: `Semester ${semester} marks record has not been connected yet.`,
+      };
+    }
+
+    const sheetName = config.sheetName || 'Master-Sheet';
+    const spreadsheetId = config.spreadsheetId;
+
+    // Use Vite proxy first in development (avoids CORS), then direct Google Sheets, then Netlify fallback
+    const isDev = import.meta.env.DEV;
+    const endpoints = isDev
+      ? [
+          `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+        ]
+      : [
+          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+          `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(sheetName)}`,
+          `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+        ];
+
+    let csvText: string | null = null;
+    let lastError: string = '';
+
+    for (const url of endpoints) {
+      try {
+        const response = await fetch(url);
+        if (response.ok) {
+          const text = await response.text();
+          if (text && text.length > 50 && !text.includes('<!DOCTYPE html>')) {
+            csvText = text;
+            break;
+          }
+        }
+      } catch (err: any) {
+        lastError = err?.message || 'Network request failed';
+      }
+    }
+
+    if (!csvText) {
+      return {
+        success: false,
+        error: `Unable to load Semester ${semester} examination records. ${lastError}`.trim(),
+      };
+    }
+
+    // When semester is 1, 2, or 3, also fetch live details tab for subject names and credits
+    let semDetailsMap: Map<string, SemDetailsItem> | undefined = undefined;
+    if (semester === 1 || semester === 2 || semester === 3) {
+      const detailsSheetCandidates =
+        semester === 1
+          ? ['SEM1-Details', 'sem1-details', 'Sem1-Details']
+          : semester === 2
+          ? ['sem2-details', 'SEM2-Details', 'Sem2-Details']
+          : ['sem3-details', 'SEM3-Details', 'Sem3-Details', 'Sheet8'];
+
+      for (const dSheetName of detailsSheetCandidates) {
+        const detailsEndpoints = isDev
+          ? [
+              `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
+              `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
+            ]
+          : [
+              `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(dSheetName)}`,
+              `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=${encodeURIComponent(dSheetName)}`,
+            ];
+        if (semester === 3) {
+          const sem3DetailsGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_DETAILS_GID as string) || '';
+          if (sem3DetailsGid) {
+            detailsEndpoints.push(
+              `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3DetailsGid)}`
+            );
+          }
+        }
+        let found = false;
+        for (const dUrl of detailsEndpoints) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            const dRes = await fetch(dUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (dRes.ok) {
+              const dText = await dRes.text();
+              if (dText && dText.length > 30 && !dText.includes('<!DOCTYPE html>')) {
+                semDetailsMap = parseSemDetailsCSV(dText);
+                found = true;
+                break;
+              }
+            }
+          } catch {
+            // ignore error; defaults are already provided
+          }
+        }
+        if (found) break;
+      }
+    }
+
+    // When semester is 3, also fetch live NPTEL tab for dedicated marks & grades
+    let nptelMap: Map<string, { marks?: string; grade?: string }> | undefined = undefined;
+    if (semester === 3) {
+      const sem3NptelGid = (import.meta.env.VITE_GOOGLE_SHEETS_SEM3_NPTEL_GID as string) || '';
+      const nptelEndpoints = isDev
+        ? [
+            `/api/sheets-proxy/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
+            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
+          ]
+        : [
+            `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=NPTEL`,
+            `/.netlify/functions/marks?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheet=NPTEL`,
+          ];
+      if (sem3NptelGid) {
+        nptelEndpoints.push(
+          `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(sem3NptelGid)}`
+        );
+      }
+      for (const nUrl of nptelEndpoints) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          const nRes = await fetch(nUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (nRes.ok) {
+            const nText = await nRes.text();
+            if (nText && nText.length > 30 && !nText.includes('<!DOCTYPE html>')) {
+              nptelMap = parseNptelCSV(nText);
+              break;
+            }
+          }
+        } catch {
+          // ignore error; defaults and Master-Sheet col 126 are already available
+        }
+      }
+    }
+
+    try {
+      const parsed = parseMasterSheetCSV(csvText, semester, semDetailsMap, nptelMap);
+      if (parsed.length === 0) {
+        return {
+          success: false,
+          error: `No valid student records found in Semester ${semester} records.`,
+        };
+      }
+
+      return { success: true, data: parsed };
+    } catch (parseErr: any) {
+      return {
+        success: false,
+        error: `Failed to load Semester ${semester} records: ${parseErr?.message || 'Invalid format'}`,
+      };
+    }
+  },
+
+  /**
+   * Retrieve semester marks for a student by USN and semester
+   */
+  async getStudentMarks(
+    usn: string,
+    semester: number = 1
+  ): Promise<{ success: boolean; data?: StudentSemesterMarks; error?: string }> {
+    const res = await this.fetchSemesterMarks(semester);
+    if (!res.success || !res.data) {
+      return {
+        success: false,
+        error: res.error || `Semester ${semester} marks are not available.`,
+      };
+    }
+
+    const cleanUsn = usn.trim().toUpperCase();
+    const student = res.data.find(
+      (m) => m.usn.trim().toUpperCase() === cleanUsn
+    );
+
+    if (!student) {
+      return {
+        success: false,
+        error: `No marks record found for USN: ${usn} in Semester ${semester}.`,
+      };
+    }
+
+    return {
+      success: true,
+      data: student,
+    };
+  },
+
+  /**
+   * Get list of semesters where marks exist for a student
+   */
+  async getAvailableSemestersForStudent(usn: string): Promise<number[]> {
+    const cleanUsn = usn.trim().toUpperCase();
+    const available: number[] = [];
+    for (const sem of [1, 2, 3]) {
+      const res = await this.fetchSemesterMarks(sem);
+      if (res.success && res.data) {
+        const found = res.data.some((m) => m.usn.trim().toUpperCase() === cleanUsn);
+        if (found) {
+          available.push(sem);
+        }
+      }
+    }
+    return available.length > 0 ? available : [1, 2, 3];
+  },
+
+  /**
+   * Search courses across all connected semester sheets for a student
+   */
+  async searchAllSemesters(usn: string, query: string): Promise<GlobalCourseSearchResult[]> {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return [];
+
+    const results: GlobalCourseSearchResult[] = [];
+
+    for (const sem of SUPPORTED_SEMESTERS) {
+      const res = await this.getStudentMarks(usn, sem);
+      if (res.success && res.data && res.data.subjects) {
+        res.data.subjects.forEach((sub) => {
+          if (
+            sub.code.toLowerCase().includes(trimmed) ||
+            sub.name.toLowerCase().includes(trimmed)
+          ) {
+            results.push({
+              code: sub.code,
+              name: sub.name,
+              semester: sem,
+              type: sub.type,
+              total: sub.total,
+              maxTotal: sub.maxTotal,
+              grade: sub.grade,
+              isCompleted: sub.grade !== '-' && sub.grade !== 'IP',
+            });
+          }
+        });
+      }
+    }
+
+    return results;
+  },
+
+  /**
+   * Get all marks for student selection/inspection (fetches live from Google Sheets)
+   */
+  async getAllMarks(semester: number = 1): Promise<StudentSemesterMarks[]> {
+    const res = await this.fetchSemesterMarks(semester);
+    return res.success && res.data ? res.data : [];
+  },
+};

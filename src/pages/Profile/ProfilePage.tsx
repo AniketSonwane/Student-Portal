@@ -148,7 +148,7 @@ export const ProfilePage: React.FC = () => {
               isFadingOut ? 'animate-fade-out' : 'animate-fade-in'
             }`}
           >
-            <LoadingState message="Fetching live student profile from server..." />
+            <LoadingState message="Loading student profile..." />
           </div>
         ) : (
           <div className="space-y-4 sm:space-y-5">

@@ -3,6 +3,9 @@ export interface SubjectAttendance {
   name: string;
   percentage: string;
   numericPercentage: number;
+  attendedLectures?: number;
+  totalLectures?: number;
+  attendedDisplay?: string;
   isAllotted: boolean;
   status: 'Safe' | 'Warning' | 'Critical';
   category?: 'Common' | 'MDM' | 'OE';
@@ -16,5 +19,8 @@ export interface StudentAttendanceRecord {
   subjects: SubjectAttendance[];
   totalAverage: string;
   numericAverage: number;
+  totalAttendedLectures?: number;
+  totalDeliveredLectures?: number;
   status: 'Safe' | 'Warning' | 'Critical';
 }
+

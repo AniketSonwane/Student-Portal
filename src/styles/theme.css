@@ -21,12 +21,12 @@
   --highlight-gold: #F8D299;
   --highlight-orange: #F59E51;
 
-  /* True Black Dark Theme */
-  --bg-app: #000000;
-  --bg-surface: #0B0B0D;
-  --bg-surface-card: #111114;
-  --bg-surface-hover: #18181D;
-  --border-color: #222228;
+  /* Refined Dark Theme with Depth */
+  --bg-app: #0B0C10;
+  --bg-surface: #12131C;
+  --bg-surface-card: #151621;
+  --bg-surface-hover: #1E202E;
+  --border-color: #282A3A;
   --text-main: #F8FAFC;
   --text-muted: #94A3B8;
 }

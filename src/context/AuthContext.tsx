@@ -1,13 +1,19 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { AuthState, Student } from '../types/auth';
 import { authService } from '../services/auth';
+import { adminSheetService } from '../services/adminSheetService';
+import { PortalSettings } from '../types/admin';
+import { ROUTES } from '../utils/constants';
 
 interface AuthContextType extends AuthState {
-  loginWithGoogle: (credential: string, emailHint?: string) => Promise<{ success: boolean; isAdmin?: boolean; error?: string }>;
+  loginWithGoogle: (credential: string, emailHint?: string, profilePictureUrl?: string) => Promise<{ success: boolean; isAdmin?: boolean; error?: string }>;
   loginAsStudent: (student: Student) => void;
-  logout: () => void;
+  logout: (msg?: string) => void;
   clearError: () => void;
   updateUser: (updatedData: Partial<Student>) => void;
+  isPortalLocked: boolean;
+  lockReason: string | null;
+  checkPortalLock: (force?: boolean) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -21,19 +27,121 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     error: null,
   });
 
+  const [isPortalLocked, setIsPortalLocked] = useState<boolean>(() => {
+    return adminSheetService.getPortalSettings().is_locked;
+  });
+  const [lockReason, setLockReason] = useState<string | null>(() => {
+    return adminSheetService.getPortalSettings().lock_reason || null;
+  });
+
+  const checkPortalLock = async (force = false): Promise<boolean> => {
+    try {
+      const settings = await adminSheetService.fetchLiveSettings(force);
+      setIsPortalLocked(settings.is_locked);
+      setLockReason(settings.lock_reason || null);
+
+      const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+      const isAdmin = adminSheetService.isAdminAuthenticated();
+
+      if (settings.is_locked && !isInspecting && !isAdmin) {
+        const student = authService.getCurrentStudent();
+        if (student) {
+          authService.logout();
+          setState({
+            user: null,
+            token: null,
+            isAuthenticated: false,
+            isLoading: false,
+            error: settings.lock_reason || 'The portal is currently locked for maintenance by the administrator.',
+          });
+          if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
+            window.location.href = ROUTES.LOGIN;
+          }
+        }
+      }
+      return settings.is_locked;
+    } catch {
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    // Initial fetch of live settings on load
+    checkPortalLock(true);
+
+    const handlePortalSettingsChanged = (e: Event) => {
+      const customEvt = e as CustomEvent<PortalSettings>;
+      if (customEvt.detail) {
+        setIsPortalLocked(customEvt.detail.is_locked);
+        setLockReason(customEvt.detail.lock_reason || null);
+        const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+        const isAdmin = adminSheetService.isAdminAuthenticated();
+        if (customEvt.detail.is_locked && !isInspecting && !isAdmin && authService.getCurrentStudent()) {
+          authService.logout();
+          setState({
+            user: null,
+            token: null,
+            isAuthenticated: false,
+            isLoading: false,
+            error: customEvt.detail.lock_reason || 'The portal is currently locked for maintenance by the administrator.',
+          });
+          if (typeof window !== 'undefined' && window.location.pathname !== ROUTES.LOGIN) {
+            window.location.replace(ROUTES.LOGIN);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('portal_settings_changed', handlePortalSettingsChanged);
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'student_portal_admin_settings') {
+        checkPortalLock(false);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    // Periodic live lock check every 3 seconds so maintenance activates in real-time
+    const lockTimer = setInterval(() => {
+      checkPortalLock(true);
+    }, 3000);
+
+    return () => {
+      clearInterval(lockTimer);
+      window.removeEventListener('portal_settings_changed', handlePortalSettingsChanged);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
   useEffect(() => {
     try {
       const student = authService.getCurrentStudent();
       const token = authService.getToken();
 
       if (student && token) {
-        setState({
-          user: student,
-          token,
-          isAuthenticated: true,
-          isLoading: false,
-          error: null,
-        });
+        // If an active session exists without an explicit login timestamp, initialize it now
+        if (!authService.getLoginTime()) {
+          authService.setLoginTime();
+        }
+
+        if (!authService.isSessionExpired()) {
+          setState({
+            user: student,
+            token,
+            isAuthenticated: true,
+            isLoading: false,
+            error: null,
+          });
+        } else {
+          // Session expired after 30 minutes
+          authService.logout();
+          setState({
+            user: null,
+            token: null,
+            isAuthenticated: false,
+            isLoading: false,
+            error: null,
+          });
+        }
       } else {
         setState((prev) => ({ ...prev, isLoading: false }));
       }
@@ -47,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('student_portal_token', token);
     localStorage.setItem('student_portal_user', JSON.stringify(student));
     localStorage.setItem('student_portal_admin_inspecting', 'true');
+    authService.setLoginTime();
     setState({
       user: student,
       token,
@@ -56,10 +165,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const loginWithGoogle = async (credential: string, emailHint?: string): Promise<{ success: boolean; isAdmin?: boolean; error?: string }> => {
+  const loginWithGoogle = async (credential: string, emailHint?: string, profilePictureUrl?: string): Promise<{ success: boolean; isAdmin?: boolean; error?: string }> => {
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
     try {
-      const result = await authService.loginWithGoogle(credential, emailHint);
+      const result = await authService.loginWithGoogle(credential, emailHint, profilePictureUrl);
 
       if (result.isAdmin) {
         setState((prev) => ({
@@ -103,16 +212,72 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const logout = () => {
+  const logout = (msg?: string) => {
     authService.logout();
     setState({
       user: null,
       token: null,
       isAuthenticated: false,
       isLoading: false,
-      error: null,
+      error: msg || null,
     });
   };
+
+  // 30-minute Session timeout management
+  useEffect(() => {
+    if (!state.isAuthenticated) return;
+
+    // Only primary admin session configured in environment never expires; student sessions expire after 30 minutes
+    if (authService.isTimeoutExempt()) {
+      // Still check portal lock periodically, but no session timeout
+      const interval = setInterval(() => {
+        checkPortalLock(false);
+      }, 10000);
+      return () => clearInterval(interval);
+    }
+
+    if (authService.isSessionExpired()) {
+      logout();
+      return;
+    }
+
+    const remainingTime = authService.getRemainingSessionTime();
+
+    // Trigger logout when 30 minutes expire
+    const timer = setTimeout(() => {
+      logout();
+    }, remainingTime);
+
+    // Periodic check (every 3s) for instant real-time portal lock synchronization across all users
+    const interval = setInterval(() => {
+      if (authService.isSessionExpired()) {
+        logout();
+      } else {
+        checkPortalLock(false);
+      }
+    }, 3000);
+
+    // Immediate check on tab visibility change or window focus
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        if (authService.isSessionExpired()) {
+          logout();
+        } else {
+          checkPortalLock(true);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
+  }, [state.isAuthenticated, state.user]);
 
   const clearError = () => {
     setState((prev) => ({ ...prev, error: null }));
@@ -134,6 +299,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         clearError,
         updateUser,
+        isPortalLocked,
+        lockReason,
+        checkPortalLock,
       }}
     >
       {children}

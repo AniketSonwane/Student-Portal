@@ -27,7 +27,7 @@ export const StatementModal: React.FC<StatementModalProps> = ({
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title="Official Semester Grade Statement"
+        title="Semester Grade Statement"
         maxWidth="4xl"
       >
         <div className="space-y-6 text-slate-800 dark:text-slate-100">
@@ -40,13 +40,20 @@ export const StatementModal: React.FC<StatementModalProps> = ({
             <div className="text-center pb-3.5 sm:pb-5 border-b border-slate-200 dark:border-[#22222A]">
               <div className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-xs font-semibold bg-slate-100 dark:bg-[#16161D] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#272732] mb-2 sm:mb-3">
                 <Calendar className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#8048A8] dark:text-[#D1A7FF]" />
-                <span>Academic Session 2025–2026 • Semester {marks.semester}</span>
+                <span>
+                  Academic Session {(() => {
+                    const y = new Date().getFullYear();
+                    const m = new Date().getMonth() + 1;
+                    const startYear = m >= 6 ? y : y - 1;
+                    return `${startYear}–${startYear + 1}`;
+                  })()} • Semester {marks.semester}
+                </span>
               </div>
               <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white uppercase leading-snug">
                 Student Academic Grade Statement
               </h2>
               <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Synchronized with Master-Sheet Examination Records
+                Academic Examination Records
               </p>
             </div>
 
@@ -224,7 +231,7 @@ export const StatementModal: React.FC<StatementModalProps> = ({
 
             {/* Authenticity & Verification Signature Row */}
             <div className="pt-3.5 sm:pt-4 border-t border-slate-200 dark:border-[#202028] flex flex-col sm:flex-row items-center justify-between text-[10px] sm:text-[11px] text-slate-400 gap-1 text-center sm:text-left">
-              <span>Verified System Statement • Extracted from Google Sheets Master Record</span>
+              <span>Verified Institutional Statement • Academic Record</span>
               <span>Generated on {new Date().toLocaleDateString()}</span>
             </div>
           </div>

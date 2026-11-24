@@ -8,6 +8,10 @@ import { MarksPage } from './pages/Marks/MarksPage';
 import { StatementPage } from './pages/Statement/StatementPage';
 import { ProfilePage } from './pages/Profile/ProfilePage';
 import { AttendancePage } from './pages/Attendance/AttendancePage';
+import { ExamDatesPage } from './pages/ExamDates/ExamDatesPage';
+import { TimetablePage } from './pages/Timetable/TimetablePage';
+import { SemesterDataPage } from './pages/SemesterData/SemesterDataPage';
+import { NoticesPage } from './pages/Notices/NoticesPage';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 import { TermsPage } from './pages/Terms/TermsPage';
 import { AdminPortalPage } from './pages/Admin/AdminPortalPage';
@@ -17,11 +21,12 @@ import { BottomNav } from './components/layout/BottomNav';
 import { Footer } from './components/layout/Footer';
 import { AdminInspectionBanner } from './components/layout/AdminInspectionBanner';
 import { ScrollToTop } from './components/common/ScrollToTop';
+import { adminSheetService } from './services/adminSheetService';
 import { ROUTES } from './utils/constants';
 
 // Protected Route Guard
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isPortalLocked } = useAuth();
 
   if (isLoading) {
     return (
@@ -29,6 +34,14 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
         <LoadingState message="Verifying student authorization..." />
       </div>
     );
+  }
+
+  const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+  const isAdmin = adminSheetService.isAdminAuthenticated();
+
+  // If portal is locked and user is not an administrator / inspecting, redirect to login
+  if (isPortalLocked && !isInspecting && !isAdmin) {
+    return <Navigate to={ROUTES.LOGIN} replace />;
   }
 
   if (!isAuthenticated) {
@@ -40,7 +53,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
 // Public Route Guard (prevents logged in users from seeing login again)
 const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isPortalLocked } = useAuth();
 
   if (isLoading) {
     return (
@@ -50,7 +63,10 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
-  if (isAuthenticated) {
+  const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+  const isAdmin = adminSheetService.isAdminAuthenticated();
+
+  if (isAuthenticated && (!isPortalLocked || isInspecting || isAdmin)) {
     return <Navigate to={ROUTES.DASHBOARD} replace />;
   }
 
@@ -73,7 +89,7 @@ export const App: React.FC = () => {
             {/* Admin Inspection Banner: Displays Back to Admin Dashboard button */}
             <AdminInspectionBanner />
 
-            <div className="flex-1">
+            <div className="flex-1 flex flex-col">
               <Routes>
                 {/* Public Routes */}
                 <Route
@@ -117,6 +133,38 @@ export const App: React.FC = () => {
                   element={
                     <ProtectedRoute>
                       <AttendancePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path={ROUTES.EXAM_DATES}
+                  element={
+                    <ProtectedRoute>
+                      <ExamDatesPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path={ROUTES.TIMETABLE}
+                  element={
+                    <ProtectedRoute>
+                      <TimetablePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path={ROUTES.SEMESTER_DATA}
+                  element={
+                    <ProtectedRoute>
+                      <SemesterDataPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path={ROUTES.NOTICES}
+                  element={
+                    <ProtectedRoute>
+                      <NoticesPage />
                     </ProtectedRoute>
                   }
                 />

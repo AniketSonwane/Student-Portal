@@ -1,8 +1,7 @@
 import { Student } from '../types/auth';
 
 export const PROFILE_SPREADSHEET_ID =
-  (import.meta.env.VITE_GOOGLE_SHEETS_PROFILE_ID as string) ||
-  '18HdmD-3Ae0gZ_jlVOjBWjQaidlSG9aezDepjggong9k';
+  (import.meta.env.VITE_GOOGLE_SHEETS_PROFILE_ID as string) || '';
 
 /**
  * Clean cell values: if empty, whitespace, or invalid -> returns 'NA'
@@ -148,10 +147,17 @@ export function parseProfileCSV(csvText: string): Student[] {
   return students;
 }
 
-import { AUTHORIZED_STUDENTS_ROSTER } from '../data/studentsRoster';
+const PROFILE_SESSION_KEY = 'student_portal_profile_cache';
 
-// In-memory cache for loaded profile directory, initialized with the 68 authorized students
-let cachedProfileDirectory: Student[] = [...AUTHORIZED_STUDENTS_ROSTER];
+// In-memory cache for loaded profile directory initialized from session storage
+let cachedProfileDirectory: Student[] = (() => {
+  try {
+    const raw = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(PROFILE_SESSION_KEY) : null;
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+})();
 
 export const profileService = {
   /**
@@ -199,7 +205,7 @@ export const profileService = {
       return {
         success: false,
         data: [],
-        error: `Unable to fetch Profile Google Sheet: ${lastError || 'Empty response'}`,
+        error: `Unable to load student profile: ${lastError || 'Empty response'}`,
       };
     }
 
@@ -209,17 +215,20 @@ export const profileService = {
         return {
           success: false,
           data: cachedProfileDirectory || [],
-          error: 'No valid student records found in Profile Google Sheet.',
+          error: 'No valid student records found in student directory.',
         };
       }
 
       cachedProfileDirectory = parsed;
+      try {
+        sessionStorage.setItem(PROFILE_SESSION_KEY, JSON.stringify(parsed));
+      } catch {}
       return { success: true, data: parsed };
     } catch (err: any) {
       return {
         success: false,
         data: cachedProfileDirectory || [],
-        error: `Failed to parse Profile Google Sheet: ${err?.message || 'Invalid format'}`,
+        error: `Failed to load student profile records: ${err?.message || 'Invalid format'}`,
       };
     }
   },

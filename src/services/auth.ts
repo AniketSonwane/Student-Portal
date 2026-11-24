@@ -1,24 +1,95 @@
 import { LoginResponse, Student } from '../types/auth';
 import { profileService } from './profile';
 import { adminSheetService } from './adminSheetService';
-import { AUTHORIZED_STUDENTS_ROSTER, AUTHORIZED_COLLEGE_EMAILS } from '../data/studentsRoster';
 
 const TOKEN_KEY = 'student_portal_token';
 const USER_KEY = 'student_portal_user';
+const LOGIN_TIME_KEY = 'student_portal_login_time';
+
+export const SESSION_DURATION_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
 
 export const authService = {
   /**
-   * Check whether an email belongs to the 68 authorized college email IDs in the student directory.
+   * Session duration: 30 minutes in milliseconds
+   */
+  SESSION_DURATION_MS,
+
+  /**
+   * Save login timestamp
+   */
+  setLoginTime(timestamp: number = Date.now()) {
+    localStorage.setItem(LOGIN_TIME_KEY, timestamp.toString());
+  },
+
+  /**
+   * Retrieve login timestamp
+   */
+  getLoginTime(): number | null {
+    const raw = localStorage.getItem(LOGIN_TIME_KEY);
+    if (!raw) return null;
+    const time = parseInt(raw, 10);
+    return isNaN(time) ? null : time;
+  },
+
+  /**
+   * Determine whether current session is exempt from the 30-minute session timeout.
+   * Only the primary administrator configured via environment variables (VITE_ADMIN_EMAIL)
+   * is exempt. All student accounts and non-primary sessions are strictly subject to the 30-minute timeout.
+   */
+  isTimeoutExempt(): boolean {
+    // 1. If currently inspecting student records as admin:
+    const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
+    if (isInspecting) {
+      const adminUser = adminSheetService.getAdminUser();
+      return adminSheetService.isPrimaryAdminEmail(adminUser?.email || '');
+    }
+
+    // 2. If a student is logged in directly, they are strictly subject to the 30-min timeout
+    const currentStudent = this.getCurrentStudent();
+    if (currentStudent) {
+      return false;
+    }
+
+    // 3. If in Admin Portal session:
+    if (adminSheetService.isAdminAuthenticated()) {
+      const adminUser = adminSheetService.getAdminUser();
+      return adminSheetService.isPrimaryAdminEmail(adminUser?.email || '');
+    }
+
+    return false;
+  },
+
+  /**
+   * Check if current session has expired (after 30 minutes of login).
+   * Primary administrator sessions configured in environment never expire.
+   */
+  isSessionExpired(): boolean {
+    if (this.isTimeoutExempt()) return false;
+
+    const loginTime = this.getLoginTime();
+    if (!loginTime) return true;
+    return Date.now() - loginTime >= SESSION_DURATION_MS;
+  },
+
+  /**
+   * Get remaining session time in milliseconds.
+   * Returns Infinity for primary administrator sessions.
+   */
+  getRemainingSessionTime(): number {
+    if (this.isTimeoutExempt()) return Infinity;
+
+    const loginTime = this.getLoginTime();
+    if (!loginTime) return 0;
+    return Math.max(0, SESSION_DURATION_MS - (Date.now() - loginTime));
+  },
+
+  /**
+   * Check whether an email belongs to the authorized college domain
    */
   isAuthorizedCollegeEmail(email: string): boolean {
     const normalized = (email || '').trim().toLowerCase();
     if (!normalized) return false;
-    if (AUTHORIZED_COLLEGE_EMAILS.has(normalized)) return true;
-    // Handle the typo in row 47 of the sheet
-    if (normalized === 'shreyan.cse25@sbjit.edu.in' || normalized === 'shreyan.cse25@sbit.edu.in') {
-      return true;
-    }
-    return false;
+    return normalized.endsWith('@sbjit.edu.in') || normalized.endsWith('@sbit.edu.in');
   },
 
   /**
@@ -62,16 +133,16 @@ export const authService = {
         success: false,
         error: {
           code: 'INVALID_CREDENTIALS',
-          message: 'Unable to extract email from Google Sign-In. Please sign in using your official college email ID (@sbjit.edu.in).',
+          message: 'Unable to extract email from Google Sign-In. Please sign in using your college email ID (@sbjit.edu.in).',
         },
       };
     }
 
-    // Check if user is the authorized administrator (2007aniketsonwane@gmail.com)
+    // Check if user is the authorized administrator
     if (adminSheetService.isAuthorizedAdminEmail(emailToVerify)) {
       adminSheetService.setAdminAuthenticated(true, {
         email: emailToVerify,
-        name: 'Administrator (Aniket Sonwane)',
+        name: 'Administrator',
         picture: googlePicture,
       });
 
@@ -83,6 +154,10 @@ export const authService = {
 
     const res = await this.verifyStudent(emailToVerify);
     if (res.success && res.data) {
+      // Clean up any lingering admin session flags so student session is clean and subject to 30-min timeout
+      adminSheetService.setAdminAuthenticated(false);
+      localStorage.removeItem('student_portal_admin_inspecting');
+
       if (googlePicture) {
         res.data.student.profile_image = googlePicture;
       }
@@ -102,26 +177,19 @@ export const authService = {
         success: false,
         error: {
           code: 'INVALID_INPUT',
-          message: 'Please enter your official college email ID (@sbjit.edu.in).',
+          message: 'Please enter your college email ID (@sbjit.edu.in).',
         },
       };
     }
 
-    // Fetch live roster directly from Google Sheet (with fallback to 68 authorized students)
-    let roster: Student[] = AUTHORIZED_STUDENTS_ROSTER;
-    try {
-      const sheetRes = await profileService.fetchAllStudents(true);
-      if (sheetRes.success && sheetRes.data && sheetRes.data.length > 0) {
-        roster = sheetRes.data;
-      }
-    } catch {
-      roster = AUTHORIZED_STUDENTS_ROSTER;
-    }
+    // Fetch live settings (force refresh to guarantee instant lock check) and student directory in parallel
+    const [settings, sheetRes] = await Promise.all([
+      adminSheetService.fetchLiveSettings(true),
+      profileService.fetchAllStudents(false),
+    ]);
 
-    // Check if portal is locked by admin
-    const settings = adminSheetService.getPortalSettings();
-    if (settings.is_locked) {
-      await adminSheetService.recordLog({
+    if (settings.is_locked && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
+      adminSheetService.recordLog({
         email: rawEmail,
         status: 'BLOCKED',
         reason: settings.lock_reason || 'Portal locked for maintenance',
@@ -135,30 +203,29 @@ export const authService = {
       };
     }
 
+    // Match student from live/cached roster
+    const roster: Student[] =
+      sheetRes.success && sheetRes.data && sheetRes.data.length > 0
+        ? sheetRes.data
+        : profileService.getAllLocal();
+
     // Strict match against live student details from Google Sheet
+    const normRaw = rawEmail.replace('@sbit.', '@sbjit.');
     const student = roster.find((s) => {
-      const colEmail = (s.college_email || '').trim().toLowerCase();
+      const colEmail = (s.college_email || '').trim().toLowerCase().replace('@sbit.', '@sbjit.');
       const persEmail = (s.personal_email || '').trim().toLowerCase();
-      const googEmail = (s.google_email || '').trim().toLowerCase();
+      const googEmail = (s.google_email || '').trim().toLowerCase().replace('@sbit.', '@sbjit.');
 
       // Check college email ID, google email ID, and personal email ID from sheet
-      if (colEmail && colEmail !== 'na' && colEmail === rawEmail) return true;
-      if (googEmail && googEmail !== 'na' && googEmail === rawEmail) return true;
+      if (colEmail && colEmail !== 'na' && colEmail === normRaw) return true;
+      if (googEmail && googEmail !== 'na' && googEmail === normRaw) return true;
       if (persEmail && persEmail !== 'na' && persEmail === rawEmail) return true;
-
-      // Handle the minor typo in sheet row 47 (sbit.edu.in vs sbjit.edu.in)
-      if (
-        s.usn === 'CS25176' &&
-        (rawEmail === 'shreyan.cse25@sbjit.edu.in' || rawEmail === 'shreyan.cse25@sbit.edu.in')
-      ) {
-        return true;
-      }
 
       return false;
     });
 
     if (!student) {
-      await adminSheetService.recordLog({
+      adminSheetService.recordLog({
         email: rawEmail,
         student_name: 'Unknown User',
         usn: 'N/A',
@@ -175,8 +242,8 @@ export const authService = {
       };
     }
 
-    // Record successful login audit
-    await adminSheetService.recordLog({
+    // Record successful login audit in background (non-blocking)
+    adminSheetService.recordLog({
       email: student.college_email || rawEmail,
       student_name: student.name,
       usn: student.usn,
@@ -186,6 +253,7 @@ export const authService = {
     const mockToken = `portal_jwt_${student.student_id}_${Date.now()}`;
     localStorage.setItem(TOKEN_KEY, mockToken);
     localStorage.setItem(USER_KEY, JSON.stringify(student));
+    this.setLoginTime();
 
     return {
       success: true,
@@ -206,24 +274,18 @@ export const authService = {
         success: false,
         error: {
           code: 'INVALID_INPUT',
-          message: 'Please enter your official college email ID (@sbjit.edu.in).',
+          message: 'Please enter your college email ID (@sbjit.edu.in).',
         },
       };
     }
 
-    const roster = profileService.getAllLocal() || AUTHORIZED_STUDENTS_ROSTER;
+    const roster = profileService.getAllLocal();
+    const normRaw = rawEmail.replace('@sbit.', '@sbjit.');
 
     const student = roster.find((s) => {
-      const colEmail = (s.college_email || '').trim().toLowerCase();
+      const colEmail = (s.college_email || '').trim().toLowerCase().replace('@sbit.', '@sbjit.');
       if (!colEmail || colEmail === 'na') return false;
-      if (colEmail === rawEmail) return true;
-      if (
-        s.usn === 'CS25176' &&
-        (rawEmail === 'shreyan.cse25@sbjit.edu.in' || rawEmail === 'shreyan.cse25@sbit.edu.in')
-      ) {
-        return true;
-      }
-      return false;
+      return colEmail === normRaw;
     });
 
     if (!student) {
@@ -239,6 +301,7 @@ export const authService = {
     const mockToken = `portal_jwt_${student.student_id}_${Date.now()}`;
     localStorage.setItem(TOKEN_KEY, mockToken);
     localStorage.setItem(USER_KEY, JSON.stringify(student));
+    this.setLoginTime();
 
     return {
       success: true,
@@ -286,6 +349,7 @@ export const authService = {
   logout() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(LOGIN_TIME_KEY);
     localStorage.removeItem('student_portal_admin_inspecting');
   },
 };

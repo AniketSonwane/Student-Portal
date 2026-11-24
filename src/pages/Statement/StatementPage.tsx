@@ -28,7 +28,7 @@ export const StatementPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const targetUsn = (queryUsn || user?.usn || 'CS25131').trim().toUpperCase();
+  const targetUsn = (queryUsn || user?.usn || '').trim().toUpperCase();
 
   useEffect(() => {
     loadStatement(targetUsn, querySem);
@@ -52,11 +52,11 @@ export const StatementPage: React.FC = () => {
         setMarks(res.data);
       } else {
         setMarks(null);
-        setError(res.error || `Unable to load official academic statement for Semester ${sem}.`);
+        setError(res.error || `Unable to load academic statement for Semester ${sem}.`);
       }
     } catch {
       setMarks(null);
-      setError('Unable to load official academic statement from records.');
+      setError('Unable to load academic statement from records.');
     } finally {
       setIsLoading(false);
     }

@@ -17,14 +17,18 @@ export const cleanupUnnecessaryStorage = (): void => {
         keysToRemove.push(key);
       }
 
-      // 2. Remove obsolete demo, test, or scratch keys from development
+      // 2. Remove obsolete demo, test, or scratch keys from development, and purge timetable and exam caches
       if (
         key.startsWith('test_') ||
         key.startsWith('demo_') ||
         key.startsWith('temp_') ||
         key === 'student_portal_demo_data' ||
         key === 'student_portal_mock_logs' ||
-        key === 'student_portal_cached_students'
+        key === 'student_portal_cached_students' ||
+        key.includes('timetable') ||
+        key.includes('exam_date') ||
+        key.includes('custom_exam') ||
+        key.startsWith('student_portal_marks')
       ) {
         keysToRemove.push(key);
       }
@@ -33,36 +37,34 @@ export const cleanupUnnecessaryStorage = (): void => {
     // Purge matched unnecessary keys
     keysToRemove.forEach((k) => localStorage.removeItem(k));
 
-    // 3. Purge obsolete or broken Google Apps Script URLs
+    // Also purge timetable and exam cache from sessionStorage
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        const sessionKeys: string[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const sKey = sessionStorage.key(i);
+          if (
+            sKey &&
+            (sKey.includes('timetable') ||
+              sKey.includes('exam_date') ||
+              sKey.includes('custom_exam') ||
+              sKey.startsWith('student_portal_marks'))
+          ) {
+            sessionKeys.push(sKey);
+          }
+        }
+        sessionKeys.forEach((k) => sessionStorage.removeItem(k));
+      } catch {}
+    }
+
+    // 3. Purge obsolete or mismatched Google Apps Script URLs
     const sheetUrl = localStorage.getItem('student_portal_admin_sheet_url');
-    if (
-      sheetUrl &&
-      (sheetUrl.includes('AKfycbxvk') || !sheetUrl.startsWith('https://script.google.com'))
-    ) {
+    if (sheetUrl && !sheetUrl.startsWith('https://script.google.com')) {
       localStorage.removeItem('student_portal_admin_sheet_url');
     }
 
-    // 4. Sanitize admin logs cache: purge mock/seed entries
-    const logsRaw = localStorage.getItem('student_portal_admin_logs');
-    if (logsRaw) {
-      try {
-        const parsed = JSON.parse(logsRaw);
-        if (Array.isArray(parsed)) {
-          const cleaned = parsed.filter(
-            (l: any) =>
-              l &&
-              l.id &&
-              !String(l.id).startsWith('log-10') &&
-              !String(l.id).startsWith('test-') &&
-              l.student_name !== 'Unknown User' &&
-              !l.reason?.includes('Admin')
-          );
-          localStorage.setItem('student_portal_admin_logs', JSON.stringify(cleaned));
-        }
-      } catch {
-        localStorage.removeItem('student_portal_admin_logs');
-      }
-    }
+    // 4. Purge local logs cache (login logs are directly synced with Google Sheet, not stored in localStorage)
+    localStorage.removeItem('student_portal_admin_logs');
 
     // 5. Sanitize admin change requests cache: purge mock entries
     const reqsRaw = localStorage.getItem('student_portal_admin_change_requests');
@@ -77,6 +79,26 @@ export const cleanupUnnecessaryStorage = (): void => {
         }
       } catch {
         localStorage.removeItem('student_portal_admin_change_requests');
+      }
+    }
+
+    // 6. Sanitize notices cache: purge any corrupted fragment entries caused by legacy multiline line-splitting
+    const noticesRaw = localStorage.getItem('student_portal_notices');
+    if (noticesRaw) {
+      try {
+        const parsedNotices = JSON.parse(noticesRaw);
+        if (Array.isArray(parsedNotices)) {
+          const cleanNotices = parsedNotices.filter((n: any) => {
+            if (!n || typeof n !== 'object') return false;
+            if (typeof n.id !== 'string' || !n.id.trim() || n.id.includes('\n') || n.id.includes('"')) return false;
+            if (n.id.toLowerCase().includes('notice id')) return false;
+            if (typeof n.timestamp !== 'string' || n.timestamp.length > 60 || n.timestamp.includes('\n') || n.timestamp.includes('"')) return false;
+            return true;
+          });
+          localStorage.setItem('student_portal_notices', JSON.stringify(cleanNotices));
+        }
+      } catch {
+        localStorage.removeItem('student_portal_notices');
       }
     }
   } catch (err) {
