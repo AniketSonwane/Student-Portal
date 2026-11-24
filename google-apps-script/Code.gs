@@ -4,15 +4,30 @@
  * Paste this in:
  * Extensions > Apps Script inside your Admin / Dashboard Google Spreadsheet.
  *
- * Responsibilities:
- * - Student Login Audit Trail (Logins tab)
- * - Profile Change Requests (ChangeRequests tab)
- * - Portal Lock / Maintenance Mode (Settings tab)
- * - Timetable and Exam Dates Sheet Sync
+ * CONFIGURATION (Zero Hardcoded Secrets / IDs):
+ * 1. Bound Mode: When pasted into your Admin spreadsheet, SpreadsheetApp.getActiveSpreadsheet()
+ *    is used automatically with zero setup required.
+ * 2. Request Mode: The frontend passes spreadsheetId and rootFolderId dynamically with each request.
+ * 3. Script Properties (Optional for standalone deployments):
+ *    Project Settings (gear icon) > Script Properties:
+ *    - ADMIN_SPREADSHEET_ID
+ *    - NOTICES_SPREADSHEET_ID
+ *    - NOTICES_ROOT_FOLDER_ID
+ *    - SEMESTER_1_DRIVE_FOLDER_ID
+ *    - SEMESTER_2_DRIVE_FOLDER_ID
+ *    - SEMESTER_3_DRIVE_FOLDER_ID
  */
 
-var ADMIN_SPREADSHEET_ID = "1Ruw-7w68IV9PH9-9qugyjF5kppcGH5otTgMAHiA--uI";
-var NOTICES_SPREADSHEET_ID = "1P98kvGpLJcFAVBU6lHyw5Q89uvo0DkJwFZeXDxg8L6w";
+function getScriptProperty(key, fallback) {
+  try {
+    var val = PropertiesService.getScriptProperties().getProperty(key);
+    if (val && String(val).trim().length > 0) return String(val).trim();
+  } catch (e) {}
+  return fallback || "";
+}
+
+var ADMIN_SPREADSHEET_ID = getScriptProperty("ADMIN_SPREADSHEET_ID", "");
+var NOTICES_SPREADSHEET_ID = getScriptProperty("NOTICES_SPREADSHEET_ID", "");
 
 /**
  * ----------------------------------------------------
@@ -42,7 +57,7 @@ function authorizeScript() {
 }
 
 function getAdminSpreadsheet(customId) {
-  var id = (customId && String(customId).trim()) || ADMIN_SPREADSHEET_ID;
+  var id = (customId && String(customId).trim()) || getScriptProperty("ADMIN_SPREADSHEET_ID", "");
   if (id && id.length > 10) {
     try {
       return SpreadsheetApp.openById(id);
@@ -54,15 +69,11 @@ function getAdminSpreadsheet(customId) {
     var active = SpreadsheetApp.getActiveSpreadsheet();
     if (active) return active;
   } catch (err) {}
-  try {
-    return SpreadsheetApp.openById(ADMIN_SPREADSHEET_ID);
-  } catch (err2) {
-    return null;
-  }
+  return null;
 }
 
 function getNoticesSpreadsheet(customId) {
-  var id = (customId && String(customId).trim()) || NOTICES_SPREADSHEET_ID;
+  var id = (customId && String(customId).trim()) || getScriptProperty("NOTICES_SPREADSHEET_ID", "");
   if (id && id.length > 10) {
     try {
       return SpreadsheetApp.openById(id);
@@ -156,6 +167,99 @@ function doGet(e) {
       }
       var bRows = bSheet ? bSheet.getDataRange().getValues() : [];
       return jsonResponse({ success: true, blocked: bRows });
+    }
+
+    // ----------------------------------------------------
+    // GET-based Fallback for BLOCK_USER (guarantees cross-origin writes on Netlify/browsers)
+    // ----------------------------------------------------
+    if (action === "BLOCK_USER") {
+      var bSS = getAdminSpreadsheet(customId);
+      var bSheet = bSS ? (bSS.getSheetByName("BlockedUsers") || bSS.insertSheet("BlockedUsers")) : null;
+      if (bSheet && bSheet.getLastRow() === 0) {
+        bSheet.appendRow(["Timestamp", "User ID", "Student Name", "Reason", "Blocked By"]);
+      }
+      var targetUserId = String((e && e.parameter && (e.parameter.userId || e.parameter.user_id)) || "").trim();
+      if (!targetUserId) {
+        return jsonResponse({ success: false, error: "User ID is required" });
+      }
+      var existingData = bSheet ? bSheet.getDataRange().getValues() : [];
+      var alreadyBlocked = false;
+      for (var bi = 1; bi < existingData.length; bi++) {
+        var existingId = String(existingData[bi][1] || "").trim().toLowerCase();
+        if (existingId === targetUserId.toLowerCase()) {
+          alreadyBlocked = true;
+          var newReason = (e && e.parameter && e.parameter.reason);
+          var newName = (e && e.parameter && (e.parameter.studentName || e.parameter.student_name));
+          if (newReason) bSheet.getRange(bi + 1, 4).setValue(newReason);
+          if (newName) bSheet.getRange(bi + 1, 3).setValue(newName);
+          break;
+        }
+      }
+      var bTimestamp = (e && e.parameter && e.parameter.timestamp) || new Date().toISOString();
+      var bName = (e && e.parameter && (e.parameter.studentName || e.parameter.student_name)) || "";
+      var bReason = (e && e.parameter && e.parameter.reason) || "Blocked by administrator";
+      var bBlockedBy = (e && e.parameter && (e.parameter.blockedBy || e.parameter.blocked_by)) || "Admin";
+
+      if (!alreadyBlocked && bSheet) {
+        bSheet.appendRow([bTimestamp, targetUserId, bName, bReason, bBlockedBy]);
+      }
+      SpreadsheetApp.flush();
+      return jsonResponse({
+        success: true,
+        user: {
+          timestamp: bTimestamp,
+          userId: targetUserId,
+          studentName: bName,
+          reason: bReason,
+          blockedBy: bBlockedBy
+        }
+      });
+    }
+
+    // ----------------------------------------------------
+    // GET-based Fallback for UNBLOCK_USER
+    // ----------------------------------------------------
+    if (action === "UNBLOCK_USER") {
+      var bSS = getAdminSpreadsheet(customId);
+      var bSheet = bSS ? bSS.getSheetByName("BlockedUsers") : null;
+      var targetUserId = String((e && e.parameter && (e.parameter.userId || e.parameter.user_id)) || "").trim().toLowerCase();
+      if (bSheet && targetUserId) {
+        var existingData = bSheet.getDataRange().getValues();
+        for (var bi = existingData.length - 1; bi >= 1; bi--) {
+          var existingId = String(existingData[bi][1] || "").trim().toLowerCase();
+          if (existingId === targetUserId) {
+            bSheet.deleteRow(bi + 1);
+          }
+        }
+        SpreadsheetApp.flush();
+      }
+      return jsonResponse({ success: true, userId: targetUserId });
+    }
+
+    // ----------------------------------------------------
+    // GET-based Fallback for ADD_LOG
+    // ----------------------------------------------------
+    if (action === "ADD_LOG") {
+      var logSS = getAdminSpreadsheet(customId);
+      var logSheet = logSS ? (logSS.getSheetByName("Logins") || logSS.insertSheet("Logins")) : null;
+      if (logSheet) {
+        if (logSheet.getLastRow() === 0) {
+          logSheet.appendRow(["ID", "Timestamp", "Student Name", "USN", "Email", "Status", "Device", "Reason"]);
+        }
+        var p = e && e.parameter ? e.parameter : {};
+        logSheet.appendRow([
+          p.id || ("log-" + Date.now()),
+          p.timestamp || new Date().toISOString(),
+          p.student_name || "Unknown User",
+          p.usn || "N/A",
+          p.email || "",
+          p.status || "SUCCESS",
+          p.device || "",
+          p.reason || ""
+        ]);
+        SpreadsheetApp.flush();
+        return jsonResponse({ success: true });
+      }
     }
 
     var logSheet = ss ? ss.getSheetByName("Logins") : null;
@@ -467,6 +571,25 @@ function doPost(e) {
       return jsonResponse({ success: true, updated: true });
     }
 
+function formatDateToIST(val) {
+  var d;
+  if (!val) {
+    d = new Date();
+  } else if (typeof val === "string") {
+    var s = val.trim();
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) {
+      s += ":00+05:30";
+    }
+    d = new Date(s);
+    if (isNaN(d.getTime())) d = new Date();
+  } else if (val instanceof Date) {
+    d = val;
+  } else {
+    d = new Date();
+  }
+  return Utilities.formatDate(d, "Asia/Kolkata", "yyyy-MM-dd'T'HH:mm:ss'+05:30'");
+}
+
     // ----------------------------------------------------
     // 7. ADD NOTICE (Saves to Google Sheet & uploads document to unique Drive folder)
     // ----------------------------------------------------
@@ -506,7 +629,7 @@ function doPost(e) {
 
       var notice = body.notice || {};
       var noticeId = String(notice.id || ("NTC-" + Date.now())).trim();
-      var timestamp = notice.timestamp || new Date().toISOString();
+      var timestamp = formatDateToIST(notice.timestamp);
       var semester = notice.semester !== undefined ? notice.semester : "ALL";
       var title = notice.title || "";
       var content = notice.content || "";
@@ -520,9 +643,6 @@ function doPost(e) {
       // 1. Create unique subfolder for this notice in Google Drive
       var rootFolder = getNoticesRootFolder(body.rootFolderId);
       var noticeFolder = rootFolder.createFolder(noticeId);
-      try {
-        noticeFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch (shErr) {}
 
       var docNames = [];
       var docUrls = [];
@@ -547,9 +667,6 @@ function doPost(e) {
             fItem.name
           );
           var docFile = noticeFolder.createFile(fileBlob);
-          try {
-            docFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-          } catch (dfErr) {}
           var fName = docFile.getName();
           var fUrl = "https://drive.google.com/file/d/" + docFile.getId() + "/view";
           docNames.push(fName);
@@ -563,22 +680,7 @@ function doPost(e) {
       var docNameJoined = docNames.join("\n");
       var docUrlJoined = docUrls.join("\n");
 
-      // 3. Put notice content into notice folder as text file
-      try {
-        var contentBlob = Utilities.newBlob(
-          content + (linksJoined ? "\n\nLinks:\n" + linksJoined : ""),
-          "text/plain;charset=utf-8",
-          noticeId + "-content.txt"
-        );
-        var contentFile = noticeFolder.createFile(contentBlob);
-        try {
-          contentFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        } catch (cfErr) {}
-      } catch (cErr) {
-        Logger.log("Error saving notice content file: " + cErr);
-      }
-
-      // 4. Append row to Notices sheet
+      // 3. Append row to Notices sheet
       nSheet.appendRow([
         timestamp,
         noticeId,
@@ -666,6 +768,10 @@ function doPost(e) {
       }
 
       var notice = body.notice || {};
+      var updatedTimestamp = notice.timestamp ? formatDateToIST(notice.timestamp) : String(nRows[targetRowIndex - 1][0] || "");
+      if (notice.timestamp) {
+        nSheet.getRange(targetRowIndex, 1).setValue(updatedTimestamp);
+      }
       var semester = notice.semester !== undefined ? notice.semester : nRows[targetRowIndex - 1][2];
       var title = notice.title !== undefined ? notice.title : nRows[targetRowIndex - 1][3];
       var content = notice.content !== undefined ? notice.content : nRows[targetRowIndex - 1][4];
@@ -708,6 +814,61 @@ function doPost(e) {
         }
       }
 
+      // Helper to extract Google Drive file ID from a URL
+      function getDriveFileIdFromUrl(u) {
+        if (!u) return null;
+        var s = String(u).trim();
+        var m = s.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+                s.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                s.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        return m ? m[1] : null;
+      }
+
+      // Collect removed / deleted files to trash from Google Drive
+      var removedFileIds = [];
+      var explicitDeleted = (notice && notice.deletedDocuments) || body.deletedDocuments || (notice && notice.deletedDocumentUrls) || [];
+      if (Array.isArray(explicitDeleted)) {
+        for (var ed = 0; ed < explicitDeleted.length; ed++) {
+          var edItem = explicitDeleted[ed];
+          var edUrl = typeof edItem === "string" ? edItem : (edItem && edItem.url);
+          var edId = getDriveFileIdFromUrl(edUrl) || (edItem && edItem.id);
+          if (edId && removedFileIds.indexOf(edId) === -1) {
+            removedFileIds.push(edId);
+          }
+        }
+      }
+
+      // Any file previously attached that is no longer kept in docUrls
+      if (Array.isArray(notice.documents)) {
+        for (var eu = 0; eu < existingUrls.length; eu++) {
+          var oldUrl = existingUrls[eu];
+          var isKept = false;
+          for (var ku = 0; ku < docUrls.length; ku++) {
+            if (docUrls[ku] === oldUrl) {
+              isKept = true;
+              break;
+            }
+          }
+          if (!isKept && oldUrl) {
+            var fId = getDriveFileIdFromUrl(oldUrl);
+            if (fId && removedFileIds.indexOf(fId) === -1) {
+              removedFileIds.push(fId);
+            }
+          }
+        }
+      }
+
+      // Trash removed files from Google Drive by File ID
+      for (var rfi = 0; rfi < removedFileIds.length; rfi++) {
+        try {
+          var fileToTrash = DriveApp.getFileById(removedFileIds[rfi]);
+          fileToTrash.setTrashed(true);
+          Logger.log("Trashed removed notice file from Drive: " + removedFileIds[rfi]);
+        } catch (trashErr) {
+          Logger.log("Could not trash file " + removedFileIds[rfi] + ": " + trashErr);
+        }
+      }
+
       // Upload new files to the notice folder if provided
       var newFiles = [];
       if (Array.isArray(notice.files) && notice.files.length > 0) {
@@ -726,9 +887,6 @@ function doPost(e) {
         if (!noticeFolder) {
           var rootFolder = getNoticesRootFolder(body.rootFolderId);
           noticeFolder = rootFolder.createFolder(targetId);
-          try {
-            noticeFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-          } catch (shErr) {}
           existingFolderId = noticeFolder.getId();
           existingFolderUrl = noticeFolder.getUrl();
         }
@@ -744,9 +902,6 @@ function doPost(e) {
               fItem.name
             );
             var docFile = noticeFolder.createFile(fileBlob);
-            try {
-              docFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-            } catch (dfErr) {}
             var fName = docFile.getName();
             var fUrl = "https://drive.google.com/file/d/" + docFile.getId() + "/view";
             docNames.push(fName);
@@ -761,22 +916,24 @@ function doPost(e) {
       var docNameJoined = docNames.join("\n");
       var docUrlJoined = docUrls.join("\n");
 
-      // Update content.txt in notice folder if folder exists
+      // Also clean up notice folder: trash files matching removed IDs
       if (existingFolderId && existingFolderId.length > 5) {
         try {
-          var folder = DriveApp.getFolderById(existingFolderId);
-          var contentFiles = folder.getFilesByName(targetId + "-content.txt");
-          var contentFile = contentFiles.hasNext() ? contentFiles.next() : null;
-          var newContentStr = content + (linksJoined ? "\n\nLinks:\n" + linksJoined : "");
-          if (contentFile) {
-            contentFile.setContent(newContentStr);
-          } else {
-            var newBlob = Utilities.newBlob(newContentStr, "text/plain;charset=utf-8", targetId + "-content.txt");
-            var cf = folder.createFile(newBlob);
-            try { cf.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (cfe) {}
+          var nFolderCheck = DriveApp.getFolderById(existingFolderId);
+          if (nFolderCheck) {
+            var nFolderFiles = nFolderCheck.getFiles();
+            while (nFolderFiles.hasNext()) {
+              var nff = nFolderFiles.next();
+              var nffId = nff.getId();
+              if (removedFileIds.indexOf(nffId) !== -1) {
+                try { nff.setTrashed(true); } catch (e) {}
+              } else if (docUrls.length === 0 && (!newFiles || newFiles.length === 0)) {
+                try { nff.setTrashed(true); } catch (e) {}
+              }
+            }
           }
-        } catch (cErr) {
-          Logger.log("Error updating content file in folder: " + cErr);
+        } catch (cleanFolderErr) {
+          Logger.log("Error cleaning notice folder: " + cleanFolderErr);
         }
       }
 
@@ -797,7 +954,7 @@ function doPost(e) {
         success: true,
         notice: {
           id: targetId,
-          timestamp: nRows[targetRowIndex - 1][0],
+          timestamp: updatedTimestamp,
           semester: semester,
           title: title,
           content: content,
@@ -1025,26 +1182,31 @@ function jsonResponse(obj) {
 // ----------------------------------------------------
 // GOOGLE DRIVE SEMESTER FILES RETRIEVER
 // ----------------------------------------------------
-var SEMESTER_DRIVE_FOLDERS = {
-  1: "1JL4ftUrmq5Pynrc_EQoCTRhID0yBcZ8m",
-  2: "1NzgznyPWmK4gxX7cYjhqfdyVf93aIy9S",
-  3: "1UNcXEgLnjy-eIlsEwnxz9gZ20-Lvlhlu"
-};
+function getSemesterDriveFolderConfig() {
+  return {
+    1: getScriptProperty("SEMESTER_1_DRIVE_FOLDER_ID", ""),
+    2: getScriptProperty("SEMESTER_2_DRIVE_FOLDER_ID", ""),
+    3: getScriptProperty("SEMESTER_3_DRIVE_FOLDER_ID", "")
+  };
+}
 
 function getSemesterFilesFromDrive(targetFolderId, requestedSem) {
   var results = [];
   var errors = [];
   var folderName = "";
+  var semesterFolders = getSemesterDriveFolderConfig();
 
   try {
     var targets = [];
-    if (targetFolderId) {
-      targets.push({ id: targetFolderId, sem: requestedSem || 3 });
-    } else if (requestedSem && SEMESTER_DRIVE_FOLDERS[requestedSem]) {
-      targets.push({ id: SEMESTER_DRIVE_FOLDERS[requestedSem], sem: requestedSem });
+    if (targetFolderId && String(targetFolderId).trim().length > 10) {
+      targets.push({ id: String(targetFolderId).trim(), sem: requestedSem || 3 });
+    } else if (requestedSem && semesterFolders[requestedSem] && semesterFolders[requestedSem].length > 10) {
+      targets.push({ id: semesterFolders[requestedSem], sem: requestedSem });
     } else {
-      for (var s in SEMESTER_DRIVE_FOLDERS) {
-        targets.push({ id: SEMESTER_DRIVE_FOLDERS[s], sem: Number(s) });
+      for (var s in semesterFolders) {
+        if (semesterFolders[s] && semesterFolders[s].length > 10) {
+          targets.push({ id: semesterFolders[s], sem: Number(s) });
+        }
       }
     }
 
@@ -1089,10 +1251,12 @@ function getSemesterFilesFromDrive(targetFolderId, requestedSem) {
  * to move any files trapped in subfolders (e.g. 'DSA') directly into the root semester folder
  * and delete the empty subfolders!
  */
-function flattenSemesterFolders() {
-  for (var s in SEMESTER_DRIVE_FOLDERS) {
+function flattenSemesterFolders(customFolderMap) {
+  var folders = customFolderMap || getSemesterDriveFolderConfig();
+  for (var s in folders) {
+    if (!folders[s] || folders[s].length <= 10) continue;
     try {
-      var root = DriveApp.getFolderById(SEMESTER_DRIVE_FOLDERS[s]);
+      var root = DriveApp.getFolderById(folders[s]);
       var subs = root.getFolders();
       while (subs.hasNext()) {
         var sub = subs.next();
@@ -1119,13 +1283,16 @@ function flattenSemesterFolders() {
  * to "Anyone with the link: Viewer".
  * This immediately eliminates the "403 Forbidden" error on file downloads!
  */
-function makeDriveFoldersPublic() {
-  var folderIds = [
-    "1JL4ftUrmq5Pynrc_EQoCTRhID0yBcZ8m", // Sem 1
-    "1NzgznyPWmK4gxX7cYjhqfdyVf93aIy9S", // Sem 2
-    "1UNcXEgLnjy-eIlsEwnxz9gZ20-Lvlhlu", // Sem 3
-    "17jq8UKlFV5g3Uopm4z7s395NhuDwwrPk"  // Notices Root Folder
-  ];
+function makeDriveFoldersPublic(customFolderIds) {
+  var folderIds = Array.isArray(customFolderIds) && customFolderIds.length > 0 ? customFolderIds : [];
+  if (folderIds.length === 0) {
+    var semFolders = getSemesterDriveFolderConfig();
+    for (var k in semFolders) {
+      if (semFolders[k] && semFolders[k].length > 10) folderIds.push(semFolders[k]);
+    }
+    var noticesRoot = getNoticesRootFolder();
+    if (noticesRoot) folderIds.push(noticesRoot.getId());
+  }
 
   folderIds.forEach(function(fid) {
     try {
@@ -1163,9 +1330,10 @@ function makeDriveFoldersPublic() {
  * Run this function directly inside the Google Apps Script editor
  * to test that files are found!
  */
-function testDriveAccess() {
-  var testSem3 = getSemesterFilesFromDrive("1UNcXEgLnjy-eIlsEwnxz9gZ20-Lvlhlu", 3);
-  Logger.log("Semester 3 Files: " + JSON.stringify(testSem3));
+function testDriveAccess(folderId, sem) {
+  var targetFolderId = folderId || getSemesterDriveFolderConfig()[sem || 3];
+  var testSem3 = getSemesterFilesFromDrive(targetFolderId, sem || 3);
+  Logger.log("Semester " + (sem || 3) + " Files: " + JSON.stringify(testSem3));
   return testSem3;
 }
 
@@ -1194,10 +1362,12 @@ function formatDriveFile(file, semester, folderName) {
 // ----------------------------------------------------
 // NOTICES GOOGLE DRIVE ROOT FOLDER
 // ----------------------------------------------------
-var NOTICES_ROOT_FOLDER_ID = "17jq8UKlFV5g3Uopm4z7s395NhuDwwrPk";
+function getNoticesRootFolderId() {
+  return getScriptProperty("NOTICES_ROOT_FOLDER_ID", "");
+}
 
 function getNoticesRootFolder(customFolderId) {
-  var folderId = (customFolderId && String(customFolderId).trim().length > 10) ? String(customFolderId).trim() : NOTICES_ROOT_FOLDER_ID;
+  var folderId = (customFolderId && String(customFolderId).trim().length > 10) ? String(customFolderId).trim() : getNoticesRootFolderId();
   if (folderId && folderId.length > 10) {
     try {
       return DriveApp.getFolderById(folderId);

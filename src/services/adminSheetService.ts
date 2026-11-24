@@ -612,7 +612,38 @@ export const adminSheetService = {
       }
       return { success: true };
     } catch {
-      // 3. Fallback: Browser blocked CORS on the redirect, send via fire-and-forget no-cors
+      // 3. Fallback: Browser blocked CORS on the redirect.
+      // Try GET parameter query fallback (GET is never blocked by cross-origin redirect policies on browsers)
+      if (payload.action === 'BLOCK_USER' || payload.action === 'UNBLOCK_USER' || payload.action === 'ADD_LOG') {
+        try {
+          const params = new URLSearchParams();
+          params.set('action', payload.action);
+          params.set('spreadsheetId', ADMIN_SPREADSHEET_ID);
+          if (payload.action === 'BLOCK_USER' || payload.action === 'UNBLOCK_USER') {
+            if (payload.userId) params.set('userId', payload.userId);
+            if (payload.studentName) params.set('studentName', payload.studentName);
+            if (payload.reason) params.set('reason', payload.reason);
+            if (payload.blockedBy) params.set('blockedBy', payload.blockedBy);
+            if (payload.timestamp) params.set('timestamp', payload.timestamp);
+          } else if (payload.action === 'ADD_LOG' && payload.log) {
+            params.set('id', payload.log.id || '');
+            params.set('timestamp', payload.log.timestamp || '');
+            params.set('student_name', payload.log.student_name || '');
+            params.set('usn', payload.log.usn || '');
+            params.set('email', payload.log.email || '');
+            params.set('status', payload.log.status || '');
+            params.set('device', payload.log.device || '');
+            params.set('reason', payload.log.reason || '');
+          }
+          const getUrl = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}${params.toString()}`;
+          await fetch(getUrl, { mode: 'no-cors' });
+          return { success: true };
+        } catch (getErr) {
+          console.warn('GET fallback failed:', getErr);
+        }
+      }
+
+      // 4. Fallback: send via fire-and-forget no-cors POST
       try {
         await fetch(scriptUrl, {
           method: 'POST',
