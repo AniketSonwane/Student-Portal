@@ -88,6 +88,126 @@ function getTargetSpreadsheet(customId) {
   return getAdminSpreadsheet(customId);
 }
 
+function getBlockedUsersSheet(ss, createIfMissing) {
+  if (!ss) return null;
+  var candidates = ["blocked users", "Blocked Users", "BlockedUsers", "blockedusers"];
+  for (var i = 0; i < candidates.length; i++) {
+    var found = ss.getSheetByName(candidates[i]);
+    if (found) {
+      ensureBlockedUsersHeader(found);
+      return found;
+    }
+  }
+  var allSheets = ss.getSheets();
+  for (var j = 0; j < allSheets.length; j++) {
+    var norm = String(allSheets[j].getName() || "").trim().toLowerCase().replace(/\s+/g, "");
+    if (norm === "blockedusers") {
+      ensureBlockedUsersHeader(allSheets[j]);
+      return allSheets[j];
+    }
+  }
+  if (!createIfMissing) return null;
+  var created = ss.insertSheet("blocked users");
+  ensureBlockedUsersHeader(created);
+  return created;
+}
+
+function ensureBlockedUsersHeader(bSheet) {
+  if (bSheet && bSheet.getLastRow() === 0) {
+    bSheet.appendRow(["Timestamp", "User ID", "Student Name", "Reason", "Blocked By"]);
+    try {
+      var bHr = bSheet.getRange(1, 1, 1, 5);
+      bHr.setFontWeight("bold");
+      bHr.setBackground("#FEE2E2");
+      bSheet.setFrozenRows(1);
+    } catch (e) {}
+  }
+}
+
+function blockUserInSheet(ss, data) {
+  var blockSheet = getBlockedUsersSheet(ss, true);
+  if (!blockSheet) {
+    return { success: false, error: "Could not open Admin Spreadsheet" };
+  }
+  var targetUserId = String((data && (data.userId || data.user_id)) || "").trim();
+  if (!targetUserId) {
+    return { success: false, error: "User ID is required" };
+  }
+
+  var bTimestamp = (data && data.timestamp) || new Date().toISOString();
+  var bName = (data && (data.studentName || data.student_name)) || "";
+  var bReason = (data && data.reason) || "Blocked by administrator";
+  var bBlockedBy = (data && (data.blockedBy || data.blocked_by)) || "Admin";
+  var targetEmail = String((data && data.email) || "").trim().toLowerCase();
+
+  var existingData = blockSheet.getDataRange().getValues();
+  var alreadyBlocked = false;
+  for (var bi = 1; bi < existingData.length; bi++) {
+    var existingId = String(existingData[bi][1] || "").trim().toLowerCase();
+    if (existingId === targetUserId.toLowerCase() || (targetEmail && existingId === targetEmail)) {
+      alreadyBlocked = true;
+      blockSheet.getRange(bi + 1, 1).setValue(bTimestamp);
+      if (bName) blockSheet.getRange(bi + 1, 3).setValue(bName);
+      blockSheet.getRange(bi + 1, 4).setValue(bReason);
+      blockSheet.getRange(bi + 1, 5).setValue(bBlockedBy);
+      break;
+    }
+  }
+
+  if (!alreadyBlocked) {
+    blockSheet.appendRow([bTimestamp, targetUserId, bName, bReason, bBlockedBy]);
+  }
+  SpreadsheetApp.flush();
+
+  return {
+    success: true,
+    user: {
+      timestamp: bTimestamp,
+      userId: targetUserId,
+      studentName: bName,
+      reason: bReason,
+      blockedBy: bBlockedBy
+    }
+  };
+}
+
+function unblockUserInSheet(ss, data) {
+  var blockSheet = getBlockedUsersSheet(ss, false);
+  var rawIds = [];
+  if (data) {
+    if (data.userId) rawIds.push(String(data.userId));
+    if (data.user_id) rawIds.push(String(data.user_id));
+    if (data.email) rawIds.push(String(data.email));
+    if (Array.isArray(data.altIds)) {
+      for (var ai = 0; ai < data.altIds.length; ai++) {
+        if (data.altIds[ai]) rawIds.push(String(data.altIds[ai]));
+      }
+    } else if (typeof data.altIds === "string" && data.altIds) {
+      var parts = data.altIds.split(",");
+      for (var pi = 0; pi < parts.length; pi++) {
+        if (parts[pi]) rawIds.push(parts[pi]);
+      }
+    }
+  }
+  var matchSet = {};
+  for (var mi = 0; mi < rawIds.length; mi++) {
+    var clean = String(rawIds[mi] || "").trim().toLowerCase();
+    if (clean) matchSet[clean] = true;
+  }
+
+  if (blockSheet && Object.keys(matchSet).length > 0) {
+    var existingData = blockSheet.getDataRange().getValues();
+    for (var bi = existingData.length - 1; bi >= 1; bi--) {
+      var existingId = String(existingData[bi][1] || "").trim().toLowerCase();
+      if (matchSet[existingId]) {
+        blockSheet.deleteRow(bi + 1);
+      }
+    }
+    SpreadsheetApp.flush();
+  }
+  return { success: true, userId: (data && (data.userId || data.user_id)) || "" };
+}
+
 function doGet(e) {
   try {
     var action = (e && e.parameter && e.parameter.action) || "";
@@ -155,16 +275,7 @@ function doGet(e) {
 
     if (action === "GET_BLOCKED_USERS" || action === "BLOCKED_USERS" || action === "BLOCKED") {
       var bSS = getAdminSpreadsheet(customId);
-      var bSheet = bSS ? (bSS.getSheetByName("BlockedUsers") || bSS.insertSheet("BlockedUsers")) : null;
-      if (bSheet && bSheet.getLastRow() === 0) {
-        bSheet.appendRow(["Timestamp", "User ID", "Student Name", "Reason", "Blocked By"]);
-        try {
-          var bHr = bSheet.getRange(1, 1, 1, 5);
-          bHr.setFontWeight("bold");
-          bHr.setBackground("#FEE2E2");
-          bSheet.setFrozenRows(1);
-        } catch (e) {}
-      }
+      var bSheet = getBlockedUsersSheet(bSS, true);
       var bRows = bSheet ? bSheet.getDataRange().getValues() : [];
       return jsonResponse({ success: true, blocked: bRows });
     }
@@ -174,46 +285,7 @@ function doGet(e) {
     // ----------------------------------------------------
     if (action === "BLOCK_USER") {
       var bSS = getAdminSpreadsheet(customId);
-      var bSheet = bSS ? (bSS.getSheetByName("BlockedUsers") || bSS.insertSheet("BlockedUsers")) : null;
-      if (bSheet && bSheet.getLastRow() === 0) {
-        bSheet.appendRow(["Timestamp", "User ID", "Student Name", "Reason", "Blocked By"]);
-      }
-      var targetUserId = String((e && e.parameter && (e.parameter.userId || e.parameter.user_id)) || "").trim();
-      if (!targetUserId) {
-        return jsonResponse({ success: false, error: "User ID is required" });
-      }
-      var existingData = bSheet ? bSheet.getDataRange().getValues() : [];
-      var alreadyBlocked = false;
-      for (var bi = 1; bi < existingData.length; bi++) {
-        var existingId = String(existingData[bi][1] || "").trim().toLowerCase();
-        if (existingId === targetUserId.toLowerCase()) {
-          alreadyBlocked = true;
-          var newReason = (e && e.parameter && e.parameter.reason);
-          var newName = (e && e.parameter && (e.parameter.studentName || e.parameter.student_name));
-          if (newReason) bSheet.getRange(bi + 1, 4).setValue(newReason);
-          if (newName) bSheet.getRange(bi + 1, 3).setValue(newName);
-          break;
-        }
-      }
-      var bTimestamp = (e && e.parameter && e.parameter.timestamp) || new Date().toISOString();
-      var bName = (e && e.parameter && (e.parameter.studentName || e.parameter.student_name)) || "";
-      var bReason = (e && e.parameter && e.parameter.reason) || "Blocked by administrator";
-      var bBlockedBy = (e && e.parameter && (e.parameter.blockedBy || e.parameter.blocked_by)) || "Admin";
-
-      if (!alreadyBlocked && bSheet) {
-        bSheet.appendRow([bTimestamp, targetUserId, bName, bReason, bBlockedBy]);
-      }
-      SpreadsheetApp.flush();
-      return jsonResponse({
-        success: true,
-        user: {
-          timestamp: bTimestamp,
-          userId: targetUserId,
-          studentName: bName,
-          reason: bReason,
-          blockedBy: bBlockedBy
-        }
-      });
+      return jsonResponse(blockUserInSheet(bSS, e && e.parameter ? e.parameter : {}));
     }
 
     // ----------------------------------------------------
@@ -221,19 +293,7 @@ function doGet(e) {
     // ----------------------------------------------------
     if (action === "UNBLOCK_USER") {
       var bSS = getAdminSpreadsheet(customId);
-      var bSheet = bSS ? bSS.getSheetByName("BlockedUsers") : null;
-      var targetUserId = String((e && e.parameter && (e.parameter.userId || e.parameter.user_id)) || "").trim().toLowerCase();
-      if (bSheet && targetUserId) {
-        var existingData = bSheet.getDataRange().getValues();
-        for (var bi = existingData.length - 1; bi >= 1; bi--) {
-          var existingId = String(existingData[bi][1] || "").trim().toLowerCase();
-          if (existingId === targetUserId) {
-            bSheet.deleteRow(bi + 1);
-          }
-        }
-        SpreadsheetApp.flush();
-      }
-      return jsonResponse({ success: true, userId: targetUserId });
+      return jsonResponse(unblockUserInSheet(bSS, e && e.parameter ? e.parameter : {}));
     }
 
     // ----------------------------------------------------
@@ -266,18 +326,7 @@ function doGet(e) {
     var reqSheet = ss ? ss.getSheetByName("ChangeRequests") : null;
     var setSheet = ss ? ss.getSheetByName("Settings") : null;
     var nSheet = ss ? ss.getSheetByName("Notices") : null;
-    var blockSheet = ss ? ss.getSheetByName("BlockedUsers") : null;
-
-    if (ss && !blockSheet) {
-      try {
-        blockSheet = ss.insertSheet("BlockedUsers");
-        blockSheet.appendRow(["Timestamp", "User ID", "Student Name", "Reason", "Blocked By"]);
-        var bHrInit = blockSheet.getRange(1, 1, 1, 5);
-        bHrInit.setFontWeight("bold");
-        bHrInit.setBackground("#FEE2E2");
-        blockSheet.setFrozenRows(1);
-      } catch (e) {}
-    }
+    var blockSheet = getBlockedUsersSheet(ss, true);
 
     var logs = logSheet ? logSheet.getDataRange().getValues() : [];
     var requests = reqSheet ? reqSheet.getDataRange().getValues() : [];
@@ -969,81 +1018,17 @@ function formatDateToIST(val) {
     }
     
     // ----------------------------------------------------
-    // 9. BLOCK USER ID (Stored in 'BlockedUsers' tab of Admin Google Sheet)
+    // 9. BLOCK USER ID (Stored in 'blocked users' tab of Admin Google Sheet)
     // ----------------------------------------------------
     if (body.action === "BLOCK_USER") {
-      var blockSheet = activeSS.getSheetByName("BlockedUsers");
-      if (!blockSheet) {
-        blockSheet = activeSS.insertSheet("BlockedUsers");
-        blockSheet.appendRow(["Timestamp", "User ID", "Student Name", "Reason", "Blocked By"]);
-        try {
-          var bHr = blockSheet.getRange(1, 1, 1, 5);
-          bHr.setFontWeight("bold");
-          bHr.setBackground("#FEE2E2");
-          blockSheet.setFrozenRows(1);
-        } catch (e) {}
-      }
-
-      var targetUserId = String(body.userId || body.user_id || "").trim();
-      if (!targetUserId) {
-        return jsonResponse({ success: false, error: "User ID is required" });
-      }
-
-      var existingData = blockSheet.getDataRange().getValues();
-      var alreadyBlocked = false;
-      for (var bi = 1; bi < existingData.length; bi++) {
-        var existingId = String(existingData[bi][1] || "").trim().toLowerCase();
-        if (existingId === targetUserId.toLowerCase()) {
-          alreadyBlocked = true;
-          if (body.reason) {
-            blockSheet.getRange(bi + 1, 4).setValue(body.reason);
-          }
-          if (body.studentName || body.student_name) {
-            blockSheet.getRange(bi + 1, 3).setValue(body.studentName || body.student_name);
-          }
-          break;
-        }
-      }
-
-      var bTimestamp = body.timestamp || new Date().toISOString();
-      var bName = body.studentName || body.student_name || "";
-      var bReason = body.reason || "Blocked by administrator";
-      var bBlockedBy = body.blockedBy || body.blocked_by || "Admin";
-
-      if (!alreadyBlocked) {
-        blockSheet.appendRow([bTimestamp, targetUserId, bName, bReason, bBlockedBy]);
-      }
-      SpreadsheetApp.flush();
-
-      return jsonResponse({
-        success: true,
-        user: {
-          timestamp: bTimestamp,
-          userId: targetUserId,
-          studentName: bName,
-          reason: bReason,
-          blockedBy: bBlockedBy
-        }
-      });
+      return jsonResponse(blockUserInSheet(activeSS, body));
     }
 
     // ----------------------------------------------------
-    // 10. UNBLOCK USER ID (Removes row from 'BlockedUsers' tab)
+    // 10. UNBLOCK USER ID (Removes row from 'blocked users' tab)
     // ----------------------------------------------------
     if (body.action === "UNBLOCK_USER") {
-      var blockSheet = activeSS.getSheetByName("BlockedUsers");
-      var targetUserId = String(body.userId || body.user_id || "").trim().toLowerCase();
-      if (blockSheet && targetUserId) {
-        var existingData = blockSheet.getDataRange().getValues();
-        for (var bi = existingData.length - 1; bi >= 1; bi--) {
-          var existingId = String(existingData[bi][1] || "").trim().toLowerCase();
-          if (existingId === targetUserId) {
-            blockSheet.deleteRow(bi + 1);
-          }
-        }
-        SpreadsheetApp.flush();
-      }
-      return jsonResponse({ success: true, userId: body.userId });
+      return jsonResponse(unblockUserInSheet(activeSS, body));
     }
 
     // ----------------------------------------------------

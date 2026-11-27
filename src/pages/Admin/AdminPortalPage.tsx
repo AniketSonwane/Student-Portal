@@ -30,6 +30,7 @@ import {
   FileText,
   Upload,
   FolderUp,
+  UserX,
 } from 'lucide-react';
 import { adminSheetService } from '../../services/adminSheetService';
 import { profileService } from '../../services/profile';
@@ -40,7 +41,7 @@ import { semesterDataService, SemesterDriveFile, formatFileSize } from '../../se
 import { DaySchedule, LectureItem, DayName } from '../../types/timetable';
 import { ExamDateItem, ExamType } from '../../types/exam';
 import { NoticeItem, NoticeDocument } from '../../types/notice';
-import { LoginLog, ChangeRequest, PortalSettings, AdminStats } from '../../types/admin';
+import { LoginLog, ChangeRequest, PortalSettings, AdminStats, BlockedUser } from '../../types/admin';
 import { Student } from '../../types/auth';
 import { ThemeToggle } from '../../components/common/ThemeToggle';
 import { ROUTES, APP_CONFIG } from '../../utils/constants';
@@ -84,6 +85,24 @@ export const AdminPortalPage: React.FC = () => {
   const [showExamDatesManagerModal, setShowExamDatesManagerModal] = useState(false);
   const [showNoticesManagerModal, setShowNoticesManagerModal] = useState(false);
   const [showSemesterDataUploadModal, setShowSemesterDataUploadModal] = useState(false);
+  const [showBlockedUsersModal, setShowBlockedUsersModal] = useState(false);
+
+  // Block User Manager state
+  const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>(() => adminSheetService.getBlockedUsers());
+  const [isLoadingBlockedUsers, setIsLoadingBlockedUsers] = useState(false);
+  const [blockStatusFilter, setBlockStatusFilter] = useState<'ALL' | 'BLOCKED' | 'ACTIVE'>('ALL');
+  const [blockSearchQuery, setBlockSearchQuery] = useState('');
+  const [showManualBlockRow, setShowManualBlockRow] = useState(false);
+  const [newBlockUserId, setNewBlockUserId] = useState('');
+  const [newBlockStudentName, setNewBlockStudentName] = useState('');
+  const [newBlockReason, setNewBlockReason] = useState('');
+  const [blockingUserId, setBlockingUserId] = useState<string | null>(null);
+  const [blockingStudentName, setBlockingStudentName] = useState('');
+  const [blockingStudentEmail, setBlockingStudentEmail] = useState('');
+  const [blockingReasonInput, setBlockingReasonInput] = useState('Blocked by administrator');
+  const [isSubmittingBlock, setIsSubmittingBlock] = useState(false);
+  const [isUnblockingUserId, setIsUnblockingUserId] = useState<string | null>(null);
+  const [blockActionMessage, setBlockActionMessage] = useState<string | null>(null);
 
   // Semester Data Files Upload State
   const [semDataUploadSemester, setSemDataUploadSemester] = useState<number>(3);
@@ -288,6 +307,102 @@ export const AdminPortalPage: React.FC = () => {
       });
     }
   }, [showNoticesManagerModal]);
+
+  // Load blocked users and student list whenever Block User modal opens
+  useEffect(() => {
+    if (showBlockedUsersModal) {
+      setIsLoadingBlockedUsers(true);
+      adminSheetService
+        .fetchBlockedUsers(true)
+        .then((list) => {
+          if (Array.isArray(list)) setBlockedUsers(list);
+        })
+        .finally(() => setIsLoadingBlockedUsers(false));
+
+      if (!allStudents || allStudents.length === 0) {
+        profileService.fetchAllStudents(true).then((res) => {
+          if (res.success && res.data && res.data.length > 0) {
+            setAllStudents(res.data);
+          }
+        });
+      }
+    }
+  }, [showBlockedUsersModal]);
+
+  // All users combined with block status for the Block User manager
+  const { displayBlockUsers, totalBlockListCount, activeBlockListCount } = useMemo(() => {
+    const matchedBlockedKeys = new Set<string>();
+
+    const mappedStudents = allStudents.map((st) => {
+      const blockedEntry = adminSheetService.checkIfStudentIsBlocked([
+        st.student_id,
+        st.usn,
+        st.college_email,
+        st.personal_email,
+        st.google_email,
+      ]);
+      if (blockedEntry?.userId) {
+        matchedBlockedKeys.add(blockedEntry.userId.trim().toLowerCase());
+      }
+      const cleanEmail =
+        st.college_email && st.college_email !== 'NA'
+          ? st.college_email
+          : st.google_email && st.google_email !== 'NA'
+            ? st.google_email
+            : '';
+      return {
+        id: st.usn || st.student_id,
+        name: st.name,
+        email: cleanEmail,
+        semester: st.current_semester || 3,
+        isCustomEntry: false,
+        isBlocked: Boolean(blockedEntry),
+        blockedInfo: blockedEntry || undefined,
+      };
+    });
+
+    const customBlocked = blockedUsers
+      .filter((b) => {
+        const key = (b.userId || '').trim().toLowerCase();
+        return key && !matchedBlockedKeys.has(key);
+      })
+      .map((b) => ({
+        id: b.userId,
+        name: b.studentName || 'Custom Blocked User',
+        email: b.userId.includes('@') ? b.userId : '',
+        semester: 'N/A' as const,
+        isCustomEntry: true,
+        isBlocked: true,
+        blockedInfo: b,
+      }));
+
+    let combined = [...customBlocked, ...mappedStudents];
+    const totalCount = combined.length;
+    const activeCount = combined.filter((u) => !u.isBlocked).length;
+
+    if (blockStatusFilter === 'BLOCKED') {
+      combined = combined.filter((u) => u.isBlocked);
+    } else if (blockStatusFilter === 'ACTIVE') {
+      combined = combined.filter((u) => !u.isBlocked);
+    }
+
+    if (blockSearchQuery.trim()) {
+      const q = blockSearchQuery.toLowerCase().trim();
+      combined = combined.filter(
+        (u) =>
+          u.name.toLowerCase().includes(q) ||
+          u.id.toLowerCase().includes(q) ||
+          u.email.toLowerCase().includes(q) ||
+          (u.blockedInfo?.reason || '').toLowerCase().includes(q)
+      );
+    }
+
+    return {
+      displayBlockUsers: combined,
+      totalBlockListCount: totalCount,
+      activeBlockListCount: activeCount,
+    };
+  }, [allStudents, blockedUsers, blockStatusFilter, blockSearchQuery]);
 
   // Filtered Semester Drive Files
   const filteredExistingSemFiles = useMemo(() => {
@@ -972,7 +1087,13 @@ export const AdminPortalPage: React.FC = () => {
   const refreshData = async () => {
     setIsRefreshing(true);
     try {
-      const live = await adminSheetService.fetchLiveFromSheet();
+      const [live, blockedList] = await Promise.all([
+        adminSheetService.fetchLiveFromSheet(),
+        adminSheetService.fetchBlockedUsers(true).catch(() => adminSheetService.getBlockedUsers()),
+      ]);
+      if (Array.isArray(blockedList)) {
+        setBlockedUsers(blockedList);
+      }
       profileService.fetchAllStudents(true).then((res) => {
         if (res.success && res.data && res.data.length > 0) {
           setAllStudents(res.data);
@@ -1218,6 +1339,103 @@ export const AdminPortalPage: React.FC = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Block / Unblock User Handlers
+  const showTemporaryBlockMessage = (msg: string) => {
+    setBlockActionMessage(msg);
+    setTimeout(() => setBlockActionMessage(null), 4000);
+  };
+
+  const handleBlockUserSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBlockUserId.trim()) return;
+    setIsSubmittingBlock(true);
+    setBlockActionMessage(null);
+    try {
+      const targetId = newBlockUserId.trim();
+      const res = await adminSheetService.blockUser({
+        userId: targetId,
+        studentName: newBlockStudentName.trim() || undefined,
+        reason: newBlockReason.trim() || 'Blocked by administrator',
+        blockedBy: adminUser?.email || 'Administrator',
+      });
+      if (res.success) {
+        setBlockedUsers(adminSheetService.getBlockedUsers());
+        setStats(adminSheetService.getAdminStats());
+        setNewBlockUserId('');
+        setNewBlockStudentName('');
+        setNewBlockReason('');
+        setShowManualBlockRow(false);
+        showTemporaryBlockMessage(`User "${targetId}" has been blocked and saved to the blocked users tab.`);
+      } else {
+        setBlockActionMessage(`Error: ${res.error || 'Failed to block user'}`);
+      }
+    } finally {
+      setIsSubmittingBlock(false);
+    }
+  };
+
+  const handleStartInlineBlock = (studentId: string, studentName: string, studentEmail?: string) => {
+    setBlockingUserId(studentId);
+    setBlockingStudentName(studentName);
+    setBlockingStudentEmail(studentEmail || '');
+    setBlockingReasonInput('Blocked by administrator');
+    setShowManualBlockRow(false);
+  };
+
+  const handleCancelInlineBlock = () => {
+    setBlockingUserId(null);
+    setBlockingStudentName('');
+    setBlockingStudentEmail('');
+  };
+
+  const handleConfirmInlineBlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!blockingUserId) return;
+    setIsSubmittingBlock(true);
+    setBlockActionMessage(null);
+    try {
+      const reason = blockingReasonInput.trim() || 'Blocked by administrator';
+      const targetName = blockingStudentName;
+      const res = await adminSheetService.blockUser({
+        userId: blockingUserId,
+        studentName: targetName,
+        email: blockingStudentEmail || undefined,
+        reason,
+        blockedBy: adminUser?.email || 'Administrator',
+      });
+      if (res.success) {
+        setBlockedUsers(adminSheetService.getBlockedUsers());
+        setStats(adminSheetService.getAdminStats());
+        setBlockingUserId(null);
+        setBlockingStudentName('');
+        setBlockingStudentEmail('');
+        showTemporaryBlockMessage(`Blocked ${targetName || blockingUserId} successfully.`);
+      } else {
+        setBlockActionMessage(`Error: ${res.error || 'Failed to block user'}`);
+      }
+    } finally {
+      setIsSubmittingBlock(false);
+    }
+  };
+
+  const handleUnblockStudent = async (userId: string, altIds?: string[]) => {
+    if (!userId) return;
+    setIsUnblockingUserId(userId);
+    setBlockActionMessage(null);
+    try {
+      const res = await adminSheetService.unblockUser(userId, altIds);
+      if (res.success) {
+        setBlockedUsers(adminSheetService.getBlockedUsers());
+        setStats(adminSheetService.getAdminStats());
+        showTemporaryBlockMessage(`Unblocked "${userId}" and removed from blocked users.`);
+      } else {
+        setBlockActionMessage(`Error: ${res.error || 'Failed to unblock user'}`);
+      }
+    } finally {
+      setIsUnblockingUserId(null);
+    }
   };
 
 
@@ -1745,6 +1963,41 @@ export const AdminPortalPage: React.FC = () => {
                 >
                   <UserCheck className="w-3.5 h-3.5" />
                   <span>Review Change Requests</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 6. Block User (blockuser) */}
+            <div className="rounded-2xl border border-slate-200/90 dark:border-[#22222E] bg-white dark:bg-[#111116] p-5 sm:p-6 flex flex-col justify-between shadow-xs hover:shadow-md hover:border-rose-500/50 dark:hover:border-rose-500/50 hover:-translate-y-0.5 transition-all duration-200 group">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-3.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-7 h-7 rounded-xl bg-rose-600 text-white flex items-center justify-center text-xs font-black shadow-xs flex-shrink-0">
+                      6
+                    </span>
+                    <h3 className="text-sm sm:text-[15px] font-bold text-slate-900 dark:text-white flex items-center gap-1.5 truncate">
+                      <UserX className="w-4 h-4 text-rose-500 flex-shrink-0" />
+                      <span className="truncate">Block User</span>
+                    </h3>
+                  </div>
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-rose-100/70 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/40 whitespace-nowrap flex-shrink-0">
+                    {blockedUsers.length} Blocked
+                  </span>
+                </div>
+
+                <p className="text-xs sm:text-[13px] text-slate-600 dark:text-slate-400 leading-relaxed mb-5 min-h-[42px] flex items-center">
+                  View all users to block or unblock portal access, stored in the blocked users sheet tab.
+                </p>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-[#1E1E28]">
+                <button
+                  type="button"
+                  onClick={() => setShowBlockedUsersModal(true)}
+                  className="w-full py-2.5 sm:py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-[0.98] text-white font-bold text-xs sm:text-[13px] flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                >
+                  <UserX className="w-3.5 h-3.5" />
+                  <span>Manage Block User</span>
                 </button>
               </div>
             </div>
@@ -4397,6 +4650,402 @@ export const AdminPortalPage: React.FC = () => {
                 onClick={() => {
                   setShowChangeRequestsModal(false);
                   setChangeSearchQuery('');
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#1E1E26] transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL 11: Block User Management (blockuser) */}
+      {/* ======================================================== */}
+      {showBlockedUsersModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-4xl bg-white dark:bg-[#0E0E14] border border-slate-200 dark:border-[#262632] rounded-3xl shadow-2xl p-4 sm:p-7 space-y-4 max-h-[92vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3.5 border-b border-slate-200/80 dark:border-[#222228]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-400 flex items-center justify-center font-bold flex-shrink-0">
+                  <UserX className="w-5 h-5 text-rose-500" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base sm:text-lg text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>Block User</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                      {blockedUsers.length} Blocked
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Manage all portal users. Blocking an active user notifies them and signs them out automatically.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowBlockedUsersModal(false);
+                  setBlockingUserId(null);
+                  setShowManualBlockRow(false);
+                }}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1A1A24] transition-all cursor-pointer"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Notification alert */}
+            {blockActionMessage && (
+              <div className="p-3 rounded-xl bg-slate-100 dark:bg-[#181824] border border-slate-300 dark:border-zinc-700 text-slate-900 dark:text-white text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+                <Sparkles className="w-4 h-4 text-[#8048A8] flex-shrink-0" />
+                <span>{blockActionMessage}</span>
+              </div>
+            )}
+
+            {/* Controls Bar: Status Filter Chips + Search & Refresh */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-1">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                {(['ALL', 'BLOCKED', 'ACTIVE'] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => {
+                      setBlockStatusFilter(st);
+                      setBlockingUserId(null);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                      blockStatusFilter === st
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'bg-white dark:bg-[#1E1E28] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-zinc-800 hover:bg-slate-100 dark:hover:bg-[#252535]'
+                    }`}
+                  >
+                    {st === 'ALL'
+                      ? `All Users (${totalBlockListCount})`
+                      : st === 'BLOCKED'
+                        ? `Blocked (${blockedUsers.length})`
+                        : `Active (${activeBlockListCount})`}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1 sm:w-56">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={blockSearchQuery}
+                    onChange={(e) => setBlockSearchQuery(e.target.value)}
+                    placeholder="Search name, USN, email..."
+                    className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-[#1E1E28] text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-rose-500"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsLoadingBlockedUsers(true);
+                    adminSheetService
+                      .fetchBlockedUsers(true)
+                      .then((list) => {
+                        if (Array.isArray(list)) setBlockedUsers(list);
+                      })
+                      .finally(() => setIsLoadingBlockedUsers(false));
+                    profileService.fetchAllStudents(true).then((res) => {
+                      if (res.success && res.data && res.data.length > 0) {
+                        setAllStudents(res.data);
+                      }
+                    });
+                  }}
+                  className="p-2 rounded-xl border border-slate-200 dark:border-[#262632] hover:bg-slate-100 dark:hover:bg-[#1E1E28] text-slate-500 hover:text-slate-800 dark:hover:text-white transition-all cursor-pointer"
+                  title="Refresh users and blocked list"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBlockedUsers ? 'animate-spin text-rose-500' : ''}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* Users List Area */}
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <span>All Users</span>
+                  <span className="text-[11px] text-slate-500 font-normal">
+                    ({displayBlockUsers.length} user{displayBlockUsers.length === 1 ? '' : 's'})
+                  </span>
+                  {isLoadingBlockedUsers && <RefreshCw className="w-3 h-3 text-rose-500 animate-spin" />}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowManualBlockRow((prev) => !prev);
+                    setBlockingUserId(null);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 dark:text-rose-400 text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{showManualBlockRow ? 'Cancel' : 'Block Custom ID'}</span>
+                </button>
+              </div>
+
+              {/* Collapsible Manual Block Form */}
+              {showManualBlockRow && (
+                <form
+                  onSubmit={handleBlockUserSubmit}
+                  className="p-4 rounded-2xl border-2 border-rose-500/40 bg-rose-50/40 dark:bg-[#1E1014]/60 space-y-3 animate-in fade-in"
+                >
+                  <div className="flex items-center justify-between pb-1 border-b border-rose-500/20">
+                    <span className="text-xs font-bold text-rose-700 dark:text-rose-400 flex items-center gap-1.5">
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Block User by ID / USN / Email</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowManualBlockRow(false)}
+                      className="text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                        User ID / USN / Email *
+                      </label>
+                      <input
+                        type="text"
+                        value={newBlockUserId}
+                        onChange={(e) => setNewBlockUserId(e.target.value)}
+                        placeholder="e.g. CS25001 or user@sbjit.edu.in"
+                        required
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-[#121218] text-slate-900 dark:text-white font-mono text-[11px]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                        Student Name (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={newBlockStudentName}
+                        onChange={(e) => setNewBlockStudentName(e.target.value)}
+                        placeholder="e.g. Student Name"
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-[#121218] text-slate-900 dark:text-white text-xs"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                        Reason for Block
+                      </label>
+                      <input
+                        type="text"
+                        value={newBlockReason}
+                        onChange={(e) => setNewBlockReason(e.target.value)}
+                        placeholder="e.g. Blocked by administrator"
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-[#121218] text-slate-900 dark:text-white text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="submit"
+                      disabled={isSubmittingBlock || !newBlockUserId.trim()}
+                      className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {isSubmittingBlock ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Blocking...</span>
+                        </>
+                      ) : (
+                        <>
+                          <UserX className="w-3.5 h-3.5" />
+                          <span>Block User Access</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Users List */}
+              {displayBlockUsers.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 border border-dashed border-slate-200 dark:border-zinc-800 rounded-2xl p-6 text-xs">
+                  <UserX className="w-6 h-6 mx-auto mb-2 text-slate-300 dark:text-zinc-600" />
+                  <p className="font-semibold text-slate-600 dark:text-slate-300">No users found matching your filter</p>
+                  <p className="text-[11px] text-slate-400 mt-1">Try clearing the search query or switching filter tabs.</p>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {displayBlockUsers.map((st) => {
+                    const isBlockingThis = blockingUserId === st.id;
+
+                    if (isBlockingThis) {
+                      return (
+                        <form
+                          key={st.id}
+                          onSubmit={handleConfirmInlineBlock}
+                          className="p-4 rounded-2xl border-2 border-rose-500 bg-rose-50/50 dark:bg-[#1E1014]/90 shadow-md space-y-3 animate-in fade-in transition-all"
+                        >
+                          <div className="flex items-center justify-between pb-2 border-b border-rose-500/20">
+                            <span className="text-xs font-bold text-rose-700 dark:text-rose-400 truncate max-w-[70%] flex items-center gap-1.5">
+                              <UserX className="w-3.5 h-3.5" />
+                              <span>Block User: {st.name} ({st.id})</span>
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={handleCancelInlineBlock}
+                                className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white hover:bg-slate-200/50 dark:hover:bg-zinc-800 transition-all cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="submit"
+                                disabled={isSubmittingBlock}
+                                className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1 shadow-xs transition-all cursor-pointer disabled:opacity-60"
+                              >
+                                {isSubmittingBlock ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Check className="w-3.5 h-3.5" />
+                                )}
+                                <span>Confirm Block</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                              Reason for Blocking *
+                            </label>
+                            <input
+                              type="text"
+                              value={blockingReasonInput}
+                              onChange={(e) => setBlockingReasonInput(e.target.value)}
+                              placeholder="e.g. Administrative hold, Fee pending, Disciplinary action"
+                              required
+                              className="w-full px-2.5 py-1.5 rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-[#121218] text-slate-900 dark:text-white text-xs font-medium"
+                            />
+                          </div>
+                        </form>
+                      );
+                    }
+
+                    const unblockKey = st.blockedInfo?.userId || st.id;
+                    return (
+                      <div
+                        key={st.id}
+                        className={`p-3.5 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs ${
+                          st.isBlocked
+                            ? 'border-rose-300 dark:border-rose-900/60 bg-rose-50/20 dark:bg-[#180F12]'
+                            : 'border-slate-200/90 dark:border-[#22222E] bg-white dark:bg-[#121218] hover:border-slate-300 dark:hover:border-zinc-700'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-[#1A1A24] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-zinc-800">
+                              {st.id}
+                            </span>
+                            {st.semester && st.semester !== 'N/A' && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md border bg-slate-100 dark:bg-[#1A1A24] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-zinc-800">
+                                Sem {st.semester}
+                              </span>
+                            )}
+                            {st.isBlocked ? (
+                              <span className="text-[10px] font-black px-2 py-0.5 rounded-md border bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800/60 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                                <span>Blocked</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/40 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                <span>Active</span>
+                              </span>
+                            )}
+                          </div>
+
+                          <h5 className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
+                            {st.name}
+                          </h5>
+
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 flex-wrap">
+                            {st.email && (
+                              <span className="truncate max-w-[240px]">
+                                {st.email}
+                              </span>
+                            )}
+                            {st.isBlocked && st.blockedInfo?.reason && (
+                              <>
+                                {st.email && <span className="text-slate-300 dark:text-zinc-700">•</span>}
+                                <span className="text-rose-600 dark:text-rose-400 font-medium">
+                                  Reason: {st.blockedInfo.reason}
+                                </span>
+                              </>
+                            )}
+                            {st.isBlocked && st.blockedInfo?.timestamp && (
+                              <>
+                                <span className="text-slate-300 dark:text-zinc-700">•</span>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {new Date(st.blockedInfo.timestamp).toLocaleDateString()}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-center flex-shrink-0">
+                          {st.isBlocked ? (
+                            <button
+                              type="button"
+                              onClick={() => handleUnblockStudent(unblockKey, [st.id, st.email].filter(Boolean))}
+                              disabled={isUnblockingUserId === unblockKey}
+                              className="py-1.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              {isUnblockingUserId === unblockKey ? (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  <span>Unblocking...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>Unblock</span>
+                                </>
+                              )}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleStartInlineBlock(st.id, st.name, st.email)}
+                              className="py-1.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800/60 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                            >
+                              <UserX className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                              <span>Block</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="pt-3 border-t border-slate-200/80 dark:border-[#222228] flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowBlockedUsersModal(false);
+                  setBlockingUserId(null);
+                  setShowManualBlockRow(false);
                 }}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#1E1E26] transition-all cursor-pointer"
               >

@@ -182,10 +182,11 @@ export const authService = {
       };
     }
 
-    // Fetch live settings (force refresh to guarantee instant lock check) and student directory in parallel
+    // Fetch live settings, student directory, and blocked users in parallel
     const [settings, sheetRes] = await Promise.all([
       adminSheetService.fetchLiveSettings(true),
       profileService.fetchAllStudents(false),
+      adminSheetService.fetchBlockedUsers(true),
     ]);
 
     if (settings.is_locked && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
@@ -225,6 +226,26 @@ export const authService = {
     });
 
     if (!student) {
+      const blockedRaw = adminSheetService.checkIfStudentIsBlocked([rawEmail, normRaw]);
+      if (blockedRaw && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
+        adminSheetService.recordLog({
+          email: rawEmail,
+          student_name: blockedRaw.studentName || 'Blocked User',
+          usn: blockedRaw.userId || 'N/A',
+          status: 'BLOCKED',
+          reason: blockedRaw.reason || 'User is blocked by administrator',
+        });
+        return {
+          success: false,
+          error: {
+            code: 'USER_BLOCKED',
+            message: blockedRaw.reason
+              ? `Your account (${blockedRaw.userId}) has been blocked by administrator: "${blockedRaw.reason}". Please contact administration.`
+              : `Your account (${blockedRaw.userId}) has been blocked by administrator. Please contact administration.`,
+          },
+        };
+      }
+
       adminSheetService.recordLog({
         email: rawEmail,
         student_name: 'Unknown User',
@@ -238,6 +259,36 @@ export const authService = {
         error: {
           code: 'UNAUTHORIZED',
           message: `The account "${rawEmail}" is not authorized.`,
+        },
+      };
+    }
+
+    // Check if the student is blocked by administrator
+    const blockedEntry = adminSheetService.checkIfStudentIsBlocked([
+      rawEmail,
+      normRaw,
+      student.student_id,
+      student.usn,
+      student.college_email,
+      student.personal_email,
+      student.google_email,
+    ]);
+
+    if (blockedEntry && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
+      adminSheetService.recordLog({
+        email: student.college_email || rawEmail,
+        student_name: student.name,
+        usn: student.usn,
+        status: 'BLOCKED',
+        reason: blockedEntry.reason || 'User is blocked by administrator',
+      });
+      return {
+        success: false,
+        error: {
+          code: 'USER_BLOCKED',
+          message: blockedEntry.reason
+            ? `Your account (${blockedEntry.userId}) has been blocked by administrator: "${blockedEntry.reason}". Please contact administration.`
+            : `Your account (${blockedEntry.userId}) has been blocked by administrator. Please contact administration.`,
         },
       };
     }
@@ -294,6 +345,28 @@ export const authService = {
         error: {
           code: 'UNAUTHORIZED',
           message: `The account "${rawEmail}" is not authorized.`,
+        },
+      };
+    }
+
+    const blockedEntry = adminSheetService.checkIfStudentIsBlocked([
+      rawEmail,
+      normRaw,
+      student.student_id,
+      student.usn,
+      student.college_email,
+      student.personal_email,
+      student.google_email,
+    ]);
+
+    if (blockedEntry && !adminSheetService.isAuthorizedAdminEmail(rawEmail)) {
+      return {
+        success: false,
+        error: {
+          code: 'USER_BLOCKED',
+          message: blockedEntry.reason
+            ? `Your account (${blockedEntry.userId}) has been blocked by administrator: "${blockedEntry.reason}".`
+            : `Your account (${blockedEntry.userId}) has been blocked by administrator.`,
         },
       };
     }

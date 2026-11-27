@@ -26,6 +26,31 @@ export const handler: Handler = async (event) => {
   }
 
   try {
+    if (event.httpMethod === 'GET') {
+      const qs = new URLSearchParams(event.queryStringParameters as Record<string, string> || {});
+      if (!qs.get('spreadsheetId')) {
+        const defaultId =
+          process.env.VITE_GOOGLE_SHEETS_ADMIN_ID ||
+          process.env.GOOGLE_SHEETS_ADMIN_ID ||
+          '';
+        if (defaultId) qs.set('spreadsheetId', defaultId);
+      }
+      const targetUrl = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}${qs.toString()}`;
+      const response = await fetch(targetUrl, { method: 'GET', redirect: 'follow' });
+      const responseText = await response.text();
+      let responseJson: any;
+      try {
+        responseJson = JSON.parse(responseText);
+      } catch {
+        responseJson = { success: response.ok, raw: responseText };
+      }
+      return {
+        statusCode: response.status || 200,
+        headers,
+        body: JSON.stringify(responseJson),
+      };
+    }
+
     const rawBody = event.body || '{}';
     let parsed: Record<string, any> = {};
     try {

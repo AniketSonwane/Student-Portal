@@ -1,4 +1,4 @@
-import { LoginLog, ChangeRequest, PortalSettings, AdminStats } from '../types/admin';
+import { LoginLog, ChangeRequest, PortalSettings, AdminStats, BlockedUser } from '../types/admin';
 import { profileService } from './profile';
 import { cleanupUnnecessaryStorage } from '../utils/cleanStorage';
 import { TIMETABLE_SPREADSHEET_ID, EXAM_DATES_SPREADSHEET_ID, ADMIN_SPREADSHEET_ID } from '../config/sheetsConfig';
@@ -10,7 +10,61 @@ const STORAGE_KEYS = {
   SETTINGS: 'student_portal_admin_settings',
   ADMIN_AUTH: 'student_portal_admin_authenticated',
   SHEET_URL: 'student_portal_admin_sheet_url',
+  BLOCKED_USERS: 'student_portal_admin_blocked_users',
+  RECENTLY_BLOCKED: 'student_portal_admin_recently_blocked',
+  RECENTLY_UNBLOCKED: 'student_portal_admin_recently_unblocked',
 };
+
+const RECONCILIATION_TTL_MS = 5 * 60 * 1000;
+const BLOCKED_USERS_SHEET_NAMES = ['blocked users', 'Blocked Users', 'BlockedUsers'];
+const INVALID_IDENTIFIERS = new Set(['', 'na', 'n/a', 'none', '-', 'null', 'undefined']);
+
+function normalizeIdentifier(val: string): string {
+  return val.trim().toLowerCase().replace('@sbit.', '@sbjit.');
+}
+
+function isBlockedUsersHeader(row: any[]): boolean {
+  if (!row || row.length < 2) return false;
+  const c0 = String(row[0] || '').trim().toLowerCase();
+  const c1 = String(row[1] || '').trim().toLowerCase();
+  const c3 = String(row[3] || '').trim().toLowerCase();
+  if (c3 === 'usn') return false;
+  return c0 === 'timestamp' && (c1.includes('user') || c1 === 'id' || c1.includes('usn'));
+}
+
+function parseBlockedUserRows(rows: any[][], requireHeader: boolean): BlockedUser[] | null {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return requireHeader ? null : [];
+  }
+  const hasHeader = isBlockedUsersHeader(rows[0]) ||
+    String(rows[0][1] || '').trim().toLowerCase().includes('user');
+  if (requireHeader && !isBlockedUsersHeader(rows[0])) {
+    return null;
+  }
+
+  const startIndex = hasHeader ? 1 : 0;
+  const parsed: BlockedUser[] = [];
+  for (let i = startIndex; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || !r[1]) continue;
+    const userId = String(r[1]).trim();
+    if (!userId) continue;
+    let timestamp = new Date().toISOString();
+    if (r[0]) {
+      const d = new Date(r[0]);
+      if (!isNaN(d.getTime())) timestamp = d.toISOString();
+    }
+    parsed.push({
+      timestamp,
+      userId,
+      studentName: r[2] ? String(r[2]).trim() : undefined,
+      reason: r[3] ? String(r[3]).trim() : undefined,
+      blockedBy: r[4] ? String(r[4]).trim() : undefined,
+    });
+  }
+  parsed.reverse();
+  return parsed;
+}
 
 
 export const adminSheetService = {
@@ -139,6 +193,8 @@ export const adminSheetService = {
 
   _cachedLogs: [] as LoginLog[],
   _deletedRequestIds: new Set<string>(),
+  _cachedBlockedUsers: null as BlockedUser[] | null,
+  _lastBlockedUsersFetch: 0,
 
   /**
    * Retrieve all Login Logs (in-memory, direct synced with Google Sheet, no localStorage)
@@ -497,7 +553,7 @@ export const adminSheetService = {
   },
 
   /**
-   * Universal robust helper to POST payloads to Google Apps Script Web App.
+   * Universal robust helper to send payloads to Google Apps Script Web App.
    * Handles Google 302 redirects and cross-origin security restrictions on Netlify.
    */
   async postToScript(payload: Record<string, any>): Promise<{ success: boolean; data?: any; error?: string }> {
@@ -508,9 +564,37 @@ export const adminSheetService = {
     };
     const bodyStr = JSON.stringify(bodyObj);
 
-    // 1. Dual-Channel Parallel Execution:
-    // GET requests with URL parameters never drop payload across cross-origin 302 redirects in browsers.
-    // We send GET immediately to ensure instant guaranteed write to Google Sheet.
+    // 1. In production on Netlify, try serverless proxy endpoint (/api/admin-proxy) first
+    if (typeof window !== 'undefined' && !import.meta.env.DEV) {
+      try {
+        const proxyRes = await fetch('/api/admin-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr,
+        });
+        if (proxyRes.ok) {
+          try {
+            const pJson = await proxyRes.json();
+            if (pJson && pJson.success !== false) {
+              return { success: true, data: pJson };
+            }
+            if (pJson && pJson.error) {
+              return { success: false, error: pJson.error };
+            }
+          } catch {}
+          return { success: true };
+        }
+      } catch (proxyErr) {
+        console.warn('Netlify proxy call failed, falling back to direct script URL:', proxyErr);
+      }
+    }
+
+    if (!scriptUrl) {
+      return { success: false, error: 'Google Apps Script Web App URL is not configured.' };
+    }
+
+    // 2. For BLOCK_USER / UNBLOCK_USER / ADD_LOG, build GET fallback URL (preserves params across 302 redirects)
+    let getUrl = '';
     if (payload.action === 'BLOCK_USER' || payload.action === 'UNBLOCK_USER' || payload.action === 'ADD_LOG') {
       try {
         const params = new URLSearchParams();
@@ -518,6 +602,10 @@ export const adminSheetService = {
         params.set('spreadsheetId', ADMIN_SPREADSHEET_ID);
         if (payload.action === 'BLOCK_USER' || payload.action === 'UNBLOCK_USER') {
           if (payload.userId) params.set('userId', payload.userId);
+          if (payload.email) params.set('email', payload.email);
+          if (Array.isArray(payload.altIds) && payload.altIds.length > 0) {
+            params.set('altIds', payload.altIds.join(','));
+          }
           if (payload.studentName) params.set('studentName', payload.studentName);
           if (payload.reason) params.set('reason', payload.reason);
           if (payload.blockedBy) params.set('blockedBy', payload.blockedBy);
@@ -532,40 +620,34 @@ export const adminSheetService = {
           params.set('device', payload.log.device || '');
           params.set('reason', payload.log.reason || '');
         }
-        const getUrl = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}${params.toString()}`;
-        // Reliable direct background fetch with mode: 'no-cors' (guaranteed across domains and content-types)
-        fetch(getUrl, { mode: 'no-cors' }).catch(() => {});
-        if (typeof Image !== 'undefined') {
-          try {
-            const img = new Image();
-            img.src = getUrl;
-          } catch {}
-        }
+        getUrl = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}${params.toString()}`;
       } catch (getErr) {
-        console.warn('GET direct write channel failed:', getErr);
+        console.warn('GET URL build failed:', getErr);
       }
     }
 
-    // 2. In production on Netlify, also trigger serverless proxy endpoint (/api/admin-proxy)
-    if (typeof window !== 'undefined' && !import.meta.env.DEV) {
+    // For BLOCK_USER / UNBLOCK_USER, GET with JSON response confirms sheet persistence without duplicate writes
+    if ((payload.action === 'BLOCK_USER' || payload.action === 'UNBLOCK_USER') && getUrl) {
       try {
-        const proxyRes = await fetch('/api/admin-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: bodyStr,
-        });
-        if (proxyRes.ok) {
+        const getRes = await fetch(getUrl, { redirect: 'follow' });
+        if (getRes.ok) {
           try {
-            const pJson = await proxyRes.json();
-            if (pJson && pJson.success !== false) {
-              return { success: true, data: pJson };
+            const gJson = await getRes.json();
+            if (gJson && gJson.success !== false) {
+              return { success: true, data: gJson };
             }
-          } catch {}
-          return { success: true };
+            if (gJson && gJson.error) {
+              return { success: false, error: gJson.error };
+            }
+          } catch {
+            return { success: true };
+          }
         }
-      } catch (proxyErr) {
-        console.warn('Netlify proxy call failed, falling back to direct script URL:', proxyErr);
+      } catch {
+        // Fall through to POST / no-cors below
       }
+    } else if (payload.action === 'ADD_LOG' && getUrl) {
+      fetch(getUrl, { mode: 'no-cors' }).catch(() => {});
     }
 
     // 3. Direct browser POST fetch to Google Apps Script
@@ -592,14 +674,18 @@ export const adminSheetService = {
       }
       return { success: true };
     } catch {
-      // 4. Fallback: send via fire-and-forget no-cors POST
+      // 4. Fallback: send via fire-and-forget no-cors POST / GET
       try {
-        await fetch(scriptUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: bodyStr,
-        });
+        if (getUrl) {
+          await fetch(getUrl, { mode: 'no-cors' });
+        } else {
+          await fetch(scriptUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: bodyStr,
+          });
+        }
         return { success: true };
       } catch (err: any) {
         return { success: false, error: err?.message || 'Network error' };
@@ -609,6 +695,340 @@ export const adminSheetService = {
   clearLogs() {
     this._cachedLogs = [];
     localStorage.removeItem(STORAGE_KEYS.LOGS);
+  },
+
+  /**
+   * Load recently blocked users buffer to prevent CDN cache overwrites
+   */
+  getRecentlyBlocked(): Record<string, { blockedUser: BlockedUser; timestamp: number }> {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.RECENTLY_BLOCKED);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {};
+  },
+
+  saveRecentlyBlocked(data: Record<string, { blockedUser: BlockedUser; timestamp: number }>): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.RECENTLY_BLOCKED, JSON.stringify(data));
+    } catch {}
+  },
+
+  /**
+   * Load recently unblocked user IDs buffer to prevent CDN cache resurrection
+   */
+  getRecentlyUnblocked(): Record<string, number> {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.RECENTLY_UNBLOCKED);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {};
+  },
+
+  saveRecentlyUnblocked(data: Record<string, number>): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.RECENTLY_UNBLOCKED, JSON.stringify(data));
+    } catch {}
+  },
+
+  /**
+   * Reconcile remote blocked users list with recent local admin actions
+   */
+  reconcileBlockedUsers(remoteList: BlockedUser[]): BlockedUser[] {
+    const now = Date.now();
+    const recentlyBlocked = this.getRecentlyBlocked();
+    const recentlyUnblocked = this.getRecentlyUnblocked();
+
+    for (const [k, v] of Object.entries(recentlyBlocked)) {
+      if (now - v.timestamp > RECONCILIATION_TTL_MS) {
+        delete recentlyBlocked[k];
+      }
+    }
+    for (const [k, ts] of Object.entries(recentlyUnblocked)) {
+      if (now - ts > RECONCILIATION_TTL_MS) {
+        delete recentlyUnblocked[k];
+      }
+    }
+
+    const workingMap = new Map<string, BlockedUser>();
+    for (const item of remoteList) {
+      const cleanKey = normalizeIdentifier(item.userId || '');
+      if (!cleanKey) continue;
+      if (recentlyUnblocked[cleanKey]) continue;
+      workingMap.set(cleanKey, item);
+    }
+
+    for (const [cleanKey, record] of Object.entries(recentlyBlocked)) {
+      if (!workingMap.has(cleanKey)) {
+        workingMap.set(cleanKey, record.blockedUser);
+      }
+    }
+
+    this.saveRecentlyBlocked(recentlyBlocked);
+    this.saveRecentlyUnblocked(recentlyUnblocked);
+
+    return Array.from(workingMap.values());
+  },
+
+  /**
+   * Get all Blocked Users from memory or localStorage
+   */
+  getBlockedUsers(): BlockedUser[] {
+    if (this._cachedBlockedUsers) return this._cachedBlockedUsers;
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.BLOCKED_USERS);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          this._cachedBlockedUsers = parsed;
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading blocked users from localStorage:', e);
+    }
+    return [];
+  },
+
+  /**
+   * Save Blocked Users to memory and localStorage
+   */
+  setBlockedUsers(list: BlockedUser[], emitEvent = false): void {
+    this._cachedBlockedUsers = list;
+    this._lastBlockedUsersFetch = Date.now();
+    try {
+      localStorage.setItem(STORAGE_KEYS.BLOCKED_USERS, JSON.stringify(list));
+    } catch (e) {
+      console.warn('Error saving blocked users to localStorage:', e);
+    }
+    if (emitEvent && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('portal_blocked_users_changed', { detail: list }));
+    }
+  },
+
+  /**
+   * Check if student identifiers match any entry in the blocked users list
+   */
+  checkIfStudentIsBlocked(identifiers: (string | undefined | null)[]): BlockedUser | null {
+    const searchSet = new Set<string>();
+    for (const id of identifiers) {
+      if (!id || typeof id !== 'string') continue;
+      const norm = normalizeIdentifier(id);
+      if (INVALID_IDENTIFIERS.has(norm)) continue;
+      searchSet.add(norm);
+    }
+    if (searchSet.size === 0) return null;
+
+    const blockedList = this.getBlockedUsers();
+    for (const b of blockedList) {
+      const bId = normalizeIdentifier(b.userId || '');
+      if (INVALID_IDENTIFIERS.has(bId)) continue;
+      if (searchSet.has(bId)) {
+        return b;
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Check if a single identifier is blocked
+   */
+  isUserBlocked(identifier: string): boolean {
+    return Boolean(this.checkIfStudentIsBlocked([identifier]));
+  },
+
+  /**
+   * Fetch live blocked users list from 'blocked users' tab via Apps Script & GViz CSV
+   */
+  async fetchBlockedUsers(force = false): Promise<BlockedUser[]> {
+    const now = Date.now();
+    if (!force && this._cachedBlockedUsers && now - this._lastBlockedUsersFetch < 4000) {
+      return this._cachedBlockedUsers;
+    }
+
+    const adminSheetId = ADMIN_SPREADSHEET_ID;
+    const scriptUrl = this.getScriptUrl();
+
+    // 1. When forced, query Apps Script Web App (or Netlify proxy) directly for zero-cache spreadsheet read
+    if (force && (scriptUrl || (typeof window !== 'undefined' && !import.meta.env.DEV))) {
+      const endpoints: string[] = [];
+      if (typeof window !== 'undefined' && !import.meta.env.DEV) {
+        endpoints.push(
+          `/api/admin-proxy?action=GET_BLOCKED_USERS&spreadsheetId=${encodeURIComponent(adminSheetId)}&_cb=${now}`
+        );
+      }
+      if (scriptUrl) {
+        endpoints.push(
+          `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}action=GET_BLOCKED_USERS&spreadsheetId=${encodeURIComponent(adminSheetId)}&_cb=${now}`
+        );
+      }
+
+      for (const endpoint of endpoints) {
+        try {
+          const ctrl = new AbortController();
+          const tid = setTimeout(() => ctrl.abort(), 3500);
+          const response = await fetch(endpoint, { signal: ctrl.signal });
+          clearTimeout(tid);
+
+          if (response.ok) {
+            const json = await response.json();
+            if (json.success && Array.isArray(json.blocked)) {
+              const parsed = parseBlockedUserRows(json.blocked, false) || [];
+              const reconciled = this.reconcileBlockedUsers(parsed);
+              this.setBlockedUsers(reconciled, false);
+              return reconciled;
+            }
+          }
+        } catch {
+          // Try next endpoint / GViz fallback
+        }
+      }
+    }
+
+    // 2. Direct GViz CSV fetch checking 'blocked users' tab (and case variants)
+    if (adminSheetId) {
+      const isDev = import.meta.env.DEV;
+      for (const sheetName of BLOCKED_USERS_SHEET_NAMES) {
+        try {
+          const cacheBuster = `&_cb=${Date.now()}`;
+          const gvizUrl = isDev
+            ? `/api/sheets-proxy/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&headers=1${cacheBuster}`
+            : `https://docs.google.com/spreadsheets/d/${adminSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&headers=1${cacheBuster}`;
+          const ctrl = new AbortController();
+          const tid = setTimeout(() => ctrl.abort(), 2500);
+          const res = await fetch(gvizUrl, { signal: ctrl.signal });
+          clearTimeout(tid);
+
+          if (res.ok) {
+            const text = await res.text();
+            if (text) {
+              const rows = parseCSV(text);
+              const parsed = parseBlockedUserRows(rows, true);
+              if (parsed !== null) {
+                const reconciled = this.reconcileBlockedUsers(parsed);
+                this.setBlockedUsers(reconciled, false);
+                return reconciled;
+              }
+            }
+          }
+        } catch (gErr) {
+          console.warn(`GViz blocked users fetch error (${sheetName}):`, gErr);
+        }
+      }
+    }
+
+    // 3. Fallback: local cache with reconciliation
+    const current = this.getBlockedUsers();
+    const reconciled = this.reconcileBlockedUsers(current);
+    if (reconciled.length !== current.length) {
+      this.setBlockedUsers(reconciled, false);
+    }
+    return reconciled;
+  },
+
+  /**
+   * Block a user (stored in 'blocked users' tab of Admin Google Sheet)
+   */
+  async blockUser(data: {
+    userId: string;
+    studentName?: string;
+    email?: string;
+    reason?: string;
+    blockedBy?: string;
+  }): Promise<{ success: boolean; data?: BlockedUser; error?: string }> {
+    const cleanId = (data.userId || '').trim();
+    if (!cleanId) {
+      return { success: false, error: 'User ID is required.' };
+    }
+    const cleanKey = normalizeIdentifier(cleanId);
+
+    const newBlocked: BlockedUser = {
+      timestamp: new Date().toISOString(),
+      userId: cleanId,
+      studentName: data.studentName?.trim() || undefined,
+      reason: data.reason?.trim() || 'Blocked by administrator',
+      blockedBy: data.blockedBy?.trim() || this.getAdminUser()?.email || 'Administrator',
+    };
+
+    const recentlyBlocked = this.getRecentlyBlocked();
+    recentlyBlocked[cleanKey] = { blockedUser: newBlocked, timestamp: Date.now() };
+    this.saveRecentlyBlocked(recentlyBlocked);
+
+    const recentlyUnblocked = this.getRecentlyUnblocked();
+    delete recentlyUnblocked[cleanKey];
+    if (data.email) {
+      delete recentlyUnblocked[normalizeIdentifier(data.email)];
+    }
+    this.saveRecentlyUnblocked(recentlyUnblocked);
+
+    const current = this.getBlockedUsers();
+    const emailKey = data.email ? normalizeIdentifier(data.email) : '';
+    const updated = [
+      newBlocked,
+      ...current.filter((b) => {
+        const bKey = normalizeIdentifier(b.userId || '');
+        return bKey !== cleanKey && (!emailKey || bKey !== emailKey);
+      }),
+    ];
+    this.setBlockedUsers(updated, true);
+
+    const scriptUrl = this.getScriptUrl();
+    if (!scriptUrl && import.meta.env.DEV) {
+      return { success: true, data: newBlocked };
+    }
+
+    const res = await this.postToScript({
+      action: 'BLOCK_USER',
+      spreadsheetId: ADMIN_SPREADSHEET_ID,
+      userId: cleanId,
+      email: data.email?.trim() || undefined,
+      studentName: newBlocked.studentName,
+      reason: newBlocked.reason,
+      blockedBy: newBlocked.blockedBy,
+      timestamp: newBlocked.timestamp,
+    });
+    if (!res.success && res.error) {
+      return { success: false, error: res.error };
+    }
+    return { success: true, data: newBlocked };
+  },
+
+  /**
+   * Unblock a user (removes matching rows from 'blocked users' tab)
+   */
+  async unblockUser(userId: string, altIds?: string[]): Promise<{ success: boolean; error?: string }> {
+    const cleanId = (userId || '').trim();
+    if (!cleanId) return { success: false, error: 'User ID is required' };
+
+    const allIds = [cleanId, ...(altIds || [])].map((id) => (id || '').trim()).filter(Boolean);
+    const matchSet = new Set(allIds.map(normalizeIdentifier).filter((k) => !INVALID_IDENTIFIERS.has(k)));
+
+    const recentlyUnblocked = this.getRecentlyUnblocked();
+    const recentlyBlocked = this.getRecentlyBlocked();
+    const now = Date.now();
+    for (const key of matchSet) {
+      recentlyUnblocked[key] = now;
+      delete recentlyBlocked[key];
+    }
+    this.saveRecentlyUnblocked(recentlyUnblocked);
+    this.saveRecentlyBlocked(recentlyBlocked);
+
+    const current = this.getBlockedUsers();
+    const updated = current.filter((b) => !matchSet.has(normalizeIdentifier(b.userId || '')));
+    this.setBlockedUsers(updated, true);
+
+    const scriptUrl = this.getScriptUrl();
+    if (!scriptUrl && import.meta.env.DEV) {
+      return { success: true };
+    }
+
+    const res = await this.postToScript({
+      action: 'UNBLOCK_USER',
+      spreadsheetId: ADMIN_SPREADSHEET_ID,
+      userId: cleanId,
+      altIds: allIds,
+    });
+    return { success: res.success, error: res.error };
   },
 
 
@@ -1127,6 +1547,7 @@ export const adminSheetService = {
       current_students_count: profileService.getAllLocal().length,
       pending_change_requests: pendingRequests,
       is_portal_locked: settings.is_locked,
+      blocked_users_count: this.getBlockedUsers().length,
     };
   },
 

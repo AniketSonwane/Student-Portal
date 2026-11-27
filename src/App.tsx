@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { BlockedAccountModal } from './components/common/BlockedAccountModal';
 import { LoginPage } from './pages/Login/LoginPage';
 import { DashboardPage } from './pages/Dashboard/DashboardPage';
 import { MarksPage } from './pages/Marks/MarksPage';
@@ -22,11 +23,12 @@ import { Footer } from './components/layout/Footer';
 import { AdminInspectionBanner } from './components/layout/AdminInspectionBanner';
 import { ScrollToTop } from './components/common/ScrollToTop';
 import { adminSheetService } from './services/adminSheetService';
+import { authService } from './services/auth';
 import { ROUTES } from './utils/constants';
 
 // Protected Route Guard
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading, isPortalLocked } = useAuth();
+  const { isAuthenticated, isLoading, isPortalLocked, blockedInfo } = useAuth();
 
   if (isLoading) {
     return (
@@ -44,7 +46,31 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
     return <Navigate to={ROUTES.LOGIN} replace />;
   }
 
-  if (!isAuthenticated) {
+  // If student is blocked and no modal is open, sign out immediately
+  if (!isInspecting && !isAdmin && !blockedInfo) {
+    const student = authService.getCurrentStudent();
+    if (student) {
+      const blocked = adminSheetService.checkIfStudentIsBlocked([
+        student.student_id,
+        student.usn,
+        student.college_email,
+        student.personal_email,
+        student.google_email,
+      ]);
+      if (blocked) {
+        const reasonMsg = blocked.reason
+          ? `Your account (${blocked.userId}) has been blocked by administrator: "${blocked.reason}".`
+          : `Your account (${blocked.userId}) has been blocked by administrator.`;
+        try {
+          sessionStorage.setItem('student_portal_blocked_reason', reasonMsg);
+        } catch {}
+        authService.logout();
+        return <Navigate to={ROUTES.LOGIN} replace />;
+      }
+    }
+  }
+
+  if (!isAuthenticated && !blockedInfo) {
     return <Navigate to={ROUTES.LOGIN} replace />;
   }
 
@@ -73,10 +99,54 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return <>{children}</>;
 };
 
+// Global Blocked User Handler Component
+const GlobalBlockedUserHandler: React.FC = () => {
+  const { blockedInfo, dismissBlockedAndLogout } = useAuth();
+  const [countdown, setCountdown] = React.useState(5);
+  const dismissRef = React.useRef(dismissBlockedAndLogout);
+  dismissRef.current = dismissBlockedAndLogout;
+
+  React.useEffect(() => {
+    if (!blockedInfo) {
+      setCountdown(5);
+      return;
+    }
+
+    setCountdown(5);
+
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          dismissRef.current();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [blockedInfo?.userId]);
+
+  return (
+    <BlockedAccountModal
+      isOpen={Boolean(blockedInfo)}
+      blockedUser={blockedInfo?.userId}
+      studentName={blockedInfo?.studentName}
+      reason={blockedInfo?.reason}
+      secondsRemaining={countdown}
+      onAcknowledge={dismissBlockedAndLogout}
+    />
+  );
+};
+
 export const App: React.FC = () => {
   return (
     <ThemeProvider>
       <AuthProvider>
+        {/* Global Blocked User Alert Modal */}
+        <GlobalBlockedUserHandler />
+
         {/* Interactive Google Stitch Glowing Grid Background */}
         <InteractiveGridBackground />
 

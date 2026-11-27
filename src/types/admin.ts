@@ -10,6 +10,15 @@ export interface LoginLog {
   reason?: string;
 }
 
+export interface BlockedUser {
+  id?: string;
+  timestamp: string;
+  userId: string;
+  studentName?: string;
+  reason?: string;
+  blockedBy?: string;
+}
+
 export interface ChangeRequest {
   id: string;
   student_usn: string;
@@ -39,4 +48,5 @@ export interface AdminStats {
   current_students_count: number;
   pending_change_requests: number;
   is_portal_locked: boolean;
+  blocked_users_count?: number;
 }
