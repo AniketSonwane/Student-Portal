@@ -13,9 +13,9 @@
    - Never hardcode Google Sheet IDs (`1[a-zA-Z0-9_-]{25,}`), Google Drive Folder IDs, Google Apps Script URLs (`AKfycb...`), or sensitive credentials into any file in `src/` or `google-apps-script/`.
    - All IDs must come from `import.meta.env` (frontend) or `PropertiesService.getScriptProperties().getProperty(...)` / request payload (Apps Script backend).
 3. **SYNC REQUIREMENT**:
-   - Whenever any file in `src/` is added, edited, or deleted, `github_deploy_files/src/` **must** be mirrored using:
+   - Whenever any file in `src/` is added, edited, or deleted, `github_repo/src/` **must** be mirrored using:
      ```powershell
-     robocopy "src" "github_deploy_files\src" /MIR /NDL /NFL /NJH /NJS ; exit 0
+     robocopy "src" "github_repo\src" /MIR /NDL /NFL /NJH /NJS ; exit 0
      ```
    - Always run `npx.cmd tsc --noEmit ; npm.cmd run build` before declaring a task complete.
 
@@ -125,9 +125,9 @@
   ```powershell
   npx.cmd tsc --noEmit ; npm.cmd run build
   ```
-- **Sync to Deploy Folder**:
+- **Sync to GitHub Repo Folder**:
   ```powershell
-  robocopy "src" "github_deploy_files\src" /MIR /NDL /NFL /NJH /NJS ; exit 0
+  robocopy "src" "github_repo\src" /MIR /NDL /NFL /NJH /NJS ; exit 0
   ```
 - **Verify No Hardcoded IDs**:
   ```powershell

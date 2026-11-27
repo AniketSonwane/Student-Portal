@@ -572,17 +572,15 @@ export const adminSheetService = {
           headers: { 'Content-Type': 'application/json' },
           body: bodyStr,
         });
-        if (proxyRes.ok) {
-          try {
-            const pJson = await proxyRes.json();
-            if (pJson && pJson.success !== false) {
-              return { success: true, data: pJson };
-            }
-            if (pJson && pJson.error) {
-              return { success: false, error: pJson.error };
-            }
-          } catch {}
-          return { success: true };
+        const contentType = proxyRes.headers.get('content-type') || '';
+        if (proxyRes.ok && contentType.includes('application/json')) {
+          const pJson = await proxyRes.json();
+          if (pJson && pJson.success === true) {
+            return { success: true, data: pJson };
+          }
+          if (pJson && pJson.error && !scriptUrl) {
+            return { success: false, error: pJson.error };
+          }
         }
       } catch (proxyErr) {
         console.warn('Netlify proxy call failed, falling back to direct script URL:', proxyErr);
@@ -631,16 +629,19 @@ export const adminSheetService = {
       try {
         const getRes = await fetch(getUrl, { redirect: 'follow' });
         if (getRes.ok) {
-          try {
-            const gJson = await getRes.json();
-            if (gJson && gJson.success !== false) {
-              return { success: true, data: gJson };
-            }
-            if (gJson && gJson.error) {
-              return { success: false, error: gJson.error };
-            }
-          } catch {
-            return { success: true };
+          const text = await getRes.text();
+          if (text.trim().startsWith('<')) {
+            return {
+              success: false,
+              error: 'Apps Script returned HTML instead of JSON. Ensure Code.gs is deployed as Web App with access set to "Anyone".',
+            };
+          }
+          const gJson = JSON.parse(text);
+          if (gJson && gJson.success !== false) {
+            return { success: true, data: gJson };
+          }
+          if (gJson && gJson.error) {
+            return { success: false, error: gJson.error };
           }
         }
       } catch {
@@ -660,8 +661,15 @@ export const adminSheetService = {
       });
 
       if (res.ok) {
+        const text = await res.text();
+        if (text.trim().startsWith('<')) {
+          return {
+            success: false,
+            error: 'Apps Script returned HTML instead of JSON. Ensure Code.gs is deployed as Web App with access set to "Anyone".',
+          };
+        }
         try {
-          const json = await res.json();
+          const json = JSON.parse(text);
           if (json && json.success !== false) {
             return { success: true, data: json };
           }
@@ -672,9 +680,9 @@ export const adminSheetService = {
           return { success: true };
         }
       }
-      return { success: true };
+      return { success: false, error: `HTTP ${res.status} from Google Apps Script` };
     } catch {
-      // 4. Fallback: send via fire-and-forget no-cors POST / GET
+      // 4. Fallback: send via fire-and-forget no-cors GET / POST
       try {
         if (getUrl) {
           await fetch(getUrl, { mode: 'no-cors' });
@@ -950,11 +958,14 @@ export const adminSheetService = {
       blockedBy: data.blockedBy?.trim() || this.getAdminUser()?.email || 'Administrator',
     };
 
-    const recentlyBlocked = this.getRecentlyBlocked();
+    const prevRecentlyBlocked = this.getRecentlyBlocked();
+    const prevRecentlyUnblocked = this.getRecentlyUnblocked();
+
+    const recentlyBlocked = { ...prevRecentlyBlocked };
     recentlyBlocked[cleanKey] = { blockedUser: newBlocked, timestamp: Date.now() };
     this.saveRecentlyBlocked(recentlyBlocked);
 
-    const recentlyUnblocked = this.getRecentlyUnblocked();
+    const recentlyUnblocked = { ...prevRecentlyUnblocked };
     delete recentlyUnblocked[cleanKey];
     if (data.email) {
       delete recentlyUnblocked[normalizeIdentifier(data.email)];
@@ -987,8 +998,11 @@ export const adminSheetService = {
       blockedBy: newBlocked.blockedBy,
       timestamp: newBlocked.timestamp,
     });
-    if (!res.success && res.error) {
-      return { success: false, error: res.error };
+    if (!res.success) {
+      this.saveRecentlyBlocked(prevRecentlyBlocked);
+      this.saveRecentlyUnblocked(prevRecentlyUnblocked);
+      this.setBlockedUsers(current, true);
+      return { success: false, error: res.error || 'Failed to sync block to Google Sheet' };
     }
     return { success: true, data: newBlocked };
   },
@@ -1003,8 +1017,10 @@ export const adminSheetService = {
     const allIds = [cleanId, ...(altIds || [])].map((id) => (id || '').trim()).filter(Boolean);
     const matchSet = new Set(allIds.map(normalizeIdentifier).filter((k) => !INVALID_IDENTIFIERS.has(k)));
 
-    const recentlyUnblocked = this.getRecentlyUnblocked();
-    const recentlyBlocked = this.getRecentlyBlocked();
+    const prevRecentlyUnblocked = this.getRecentlyUnblocked();
+    const prevRecentlyBlocked = this.getRecentlyBlocked();
+    const recentlyUnblocked = { ...prevRecentlyUnblocked };
+    const recentlyBlocked = { ...prevRecentlyBlocked };
     const now = Date.now();
     for (const key of matchSet) {
       recentlyUnblocked[key] = now;
@@ -1028,6 +1044,11 @@ export const adminSheetService = {
       userId: cleanId,
       altIds: allIds,
     });
+    if (!res.success) {
+      this.saveRecentlyUnblocked(prevRecentlyUnblocked);
+      this.saveRecentlyBlocked(prevRecentlyBlocked);
+      this.setBlockedUsers(current, true);
+    }
     return { success: res.success, error: res.error };
   },
 

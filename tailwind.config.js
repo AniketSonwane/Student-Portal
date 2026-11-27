@@ -22,10 +22,10 @@ export default {
           light: '#FFFFFF',
           'light-subtle': '#F8F9FA',
           'light-border': '#E2E8F0',
-          dark: '#000000',
-          'dark-card': '#0E0E12',
-          'dark-card-hover': '#15151A',
-          'dark-border': '#222228',
+          dark: '#0B0C10',
+          'dark-card': '#151621',
+          'dark-card-hover': '#1E202E',
+          'dark-border': '#282A3A',
         }
       },
       fontFamily: {
@@ -40,7 +40,7 @@ export default {
       boxShadow: {
         subtle: '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
         card: '0 4px 20px -2px rgba(0, 0, 0, 0.06)',
-        'card-dark': '0 8px 30px -4px rgba(0, 0, 0, 0.85)',
+        'card-dark': '0 10px 30px -5px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08)',
         'glow-purple': '0 0 24px -4px rgba(128, 72, 168, 0.35)',
         'glow-gold': '0 0 20px -4px rgba(248, 210, 153, 0.25)',
       }
