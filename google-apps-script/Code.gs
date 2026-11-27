@@ -90,7 +90,12 @@ function getTargetSpreadsheet(customId) {
 
 function getBlockedUsersSheet(ss, createIfMissing) {
   if (!ss) return null;
-  var candidates = ["blocked users", "Blocked Users", "BlockedUsers", "blockedusers"];
+  var exact = ss.getSheetByName("blocked users");
+  if (exact) {
+    ensureBlockedUsersHeader(exact);
+    return exact;
+  }
+  var candidates = ["Blocked Users", "blockedusers"];
   for (var i = 0; i < candidates.length; i++) {
     var found = ss.getSheetByName(candidates[i]);
     if (found) {
@@ -99,16 +104,34 @@ function getBlockedUsersSheet(ss, createIfMissing) {
     }
   }
   var allSheets = ss.getSheets();
+  var legacySheet = null;
   for (var j = 0; j < allSheets.length; j++) {
-    var norm = String(allSheets[j].getName() || "").trim().toLowerCase().replace(/\s+/g, "");
-    if (norm === "blockedusers") {
+    var rawName = String(allSheets[j].getName() || "").trim();
+    var norm = rawName.toLowerCase().replace(/\s+/g, "");
+    if (rawName.toLowerCase() === "blocked users") {
       ensureBlockedUsersHeader(allSheets[j]);
       return allSheets[j];
     }
+    if (norm === "blockedusers") {
+      legacySheet = allSheets[j];
+    }
   }
-  if (!createIfMissing) return null;
+  if (!createIfMissing) {
+    if (legacySheet) ensureBlockedUsersHeader(legacySheet);
+    return legacySheet;
+  }
   var created = ss.insertSheet("blocked users");
   ensureBlockedUsersHeader(created);
+  if (legacySheet) {
+    try {
+      var legacyRows = legacySheet.getDataRange().getValues();
+      for (var li = 1; li < legacyRows.length; li++) {
+        if (legacyRows[li] && legacyRows[li][1]) {
+          created.appendRow(legacyRows[li].slice(0, 5));
+        }
+      }
+    } catch (e) {}
+  }
   return created;
 }
 

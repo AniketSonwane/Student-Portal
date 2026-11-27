@@ -105,8 +105,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
       const isAdmin = adminSheetService.isAdminAuthenticated();
+      const onAdminRoute = typeof window !== 'undefined' && window.location.pathname === ROUTES.ADMIN;
       const activeStudent = authService.getCurrentStudent();
-      const shouldCheckBlocked = Boolean(activeStudent && !isInspecting && !isAdmin);
+      const shouldCheckBlocked = Boolean(activeStudent && !isInspecting && !onAdminRoute);
 
       const [settings] = await Promise.all([
         adminSheetService.fetchLiveSettings(force),
@@ -175,8 +176,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const evaluateLocalBlockState = () => {
       const isInspecting = localStorage.getItem('student_portal_admin_inspecting') === 'true';
-      const isAdmin = adminSheetService.isAdminAuthenticated();
-      if (isInspecting || isAdmin) return;
+      const onAdminRoute = typeof window !== 'undefined' && window.location.pathname === ROUTES.ADMIN;
+      if (isInspecting || onAdminRoute) return;
       const student = authService.getCurrentStudent();
       const blocked = getStudentBlockEntry(student);
       if (blocked && student) {

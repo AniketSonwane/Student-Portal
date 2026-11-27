@@ -76,6 +76,9 @@ export const adminSheetService = {
       (import.meta.env.VITE_GOOGLE_SHEETS_ADMIN_API_URL as string) ||
       (import.meta.env.VITE_ADMIN_SHEET_URL as string) ||
       '';
+    if (envUrl && envUrl.startsWith('https://script.google.com')) {
+      return envUrl;
+    }
     const stored = localStorage.getItem(STORAGE_KEYS.SHEET_URL);
     if (stored && !stored.startsWith('https://script.google.com')) {
       localStorage.removeItem(STORAGE_KEYS.SHEET_URL);
@@ -554,7 +557,7 @@ export const adminSheetService = {
 
   /**
    * Universal robust helper to send payloads to Google Apps Script Web App.
-   * Handles Google 302 redirects and cross-origin security restrictions on Netlify.
+   * Calls scriptUrl directly (matching notices & portal lock) and uses Netlify proxy as fallback.
    */
   async postToScript(payload: Record<string, any>): Promise<{ success: boolean; data?: any; error?: string }> {
     const scriptUrl = this.getScriptUrl();
@@ -564,36 +567,50 @@ export const adminSheetService = {
     };
     const bodyStr = JSON.stringify(bodyObj);
 
-    // 1. In production on Netlify, try serverless proxy endpoint (/api/admin-proxy) first
-    if (typeof window !== 'undefined' && !import.meta.env.DEV) {
+    const validateActionResponse = (json: any): { ok: boolean; error?: string } => {
+      if (!json || json.success === false) {
+        return { ok: false, error: json?.error || 'Google Apps Script returned an error' };
+      }
+      if (
+        (payload.action === 'BLOCK_USER' || payload.action === 'UNBLOCK_USER') &&
+        json.message === 'Action processed'
+      ) {
+        return {
+          ok: false,
+          error: 'Deployed Google Apps Script is outdated. Redeploy Code.gs as a New version.',
+        };
+      }
+      return { ok: true };
+    };
+
+    const tryNetlifyProxy = async (): Promise<{ success: boolean; data?: any; error?: string } | null> => {
+      if (typeof window === 'undefined' || import.meta.env.DEV) return null;
       try {
         const proxyRes = await fetch('/api/admin-proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: bodyStr,
         });
-        if (proxyRes.ok) {
-          try {
-            const pJson = await proxyRes.json();
-            if (pJson && pJson.success !== false) {
-              return { success: true, data: pJson };
-            }
-            if (pJson && pJson.error) {
-              return { success: false, error: pJson.error };
-            }
-          } catch {}
-          return { success: true };
+        const contentType = proxyRes.headers.get('content-type') || '';
+        if (proxyRes.ok && contentType.includes('application/json')) {
+          const pJson = await proxyRes.json();
+          const check = validateActionResponse(pJson);
+          if (check.ok) return { success: true, data: pJson };
+          return { success: false, error: check.error };
         }
       } catch (proxyErr) {
-        console.warn('Netlify proxy call failed, falling back to direct script URL:', proxyErr);
+        console.warn('Netlify proxy fallback failed:', proxyErr);
       }
-    }
+      return null;
+    };
 
     if (!scriptUrl) {
+      const proxyResult = await tryNetlifyProxy();
+      if (proxyResult) return proxyResult;
       return { success: false, error: 'Google Apps Script Web App URL is not configured.' };
     }
 
-    // 2. For BLOCK_USER / UNBLOCK_USER / ADD_LOG, build GET fallback URL (preserves params across 302 redirects)
+    // Build GET URL for reliable cross-origin execution (preserves params across 302 redirects)
     let getUrl = '';
     if (payload.action === 'BLOCK_USER' || payload.action === 'UNBLOCK_USER' || payload.action === 'ADD_LOG') {
       try {
@@ -626,31 +643,31 @@ export const adminSheetService = {
       }
     }
 
-    // For BLOCK_USER / UNBLOCK_USER, GET with JSON response confirms sheet persistence without duplicate writes
+    // 1. For BLOCK_USER / UNBLOCK_USER, call direct GET first (confirms sheet persistence with JSON response)
     if ((payload.action === 'BLOCK_USER' || payload.action === 'UNBLOCK_USER') && getUrl) {
       try {
         const getRes = await fetch(getUrl, { redirect: 'follow' });
         if (getRes.ok) {
-          try {
-            const gJson = await getRes.json();
-            if (gJson && gJson.success !== false) {
-              return { success: true, data: gJson };
-            }
-            if (gJson && gJson.error) {
-              return { success: false, error: gJson.error };
-            }
-          } catch {
-            return { success: true };
+          const text = await getRes.text();
+          if (text.trim().startsWith('<')) {
+            return {
+              success: false,
+              error: 'Apps Script returned HTML instead of JSON. Ensure Code.gs is deployed as Web App with access set to "Anyone".',
+            };
           }
+          const gJson = JSON.parse(text);
+          const check = validateActionResponse(gJson);
+          if (check.ok) return { success: true, data: gJson };
+          return { success: false, error: check.error };
         }
       } catch {
-        // Fall through to POST / no-cors below
+        // Fall through to POST / proxy / no-cors below
       }
     } else if (payload.action === 'ADD_LOG' && getUrl) {
       fetch(getUrl, { mode: 'no-cors' }).catch(() => {});
     }
 
-    // 3. Direct browser POST fetch to Google Apps Script
+    // 2. Direct browser POST fetch to Google Apps Script
     try {
       const res = await fetch(scriptUrl, {
         method: 'POST',
@@ -660,36 +677,45 @@ export const adminSheetService = {
       });
 
       if (res.ok) {
+        const text = await res.text();
+        if (text.trim().startsWith('<')) {
+          return {
+            success: false,
+            error: 'Apps Script returned HTML instead of JSON. Ensure Code.gs is deployed as Web App with access set to "Anyone".',
+          };
+        }
         try {
-          const json = await res.json();
-          if (json && json.success !== false) {
-            return { success: true, data: json };
-          }
-          if (json && json.error) {
-            return { success: false, error: json.error };
-          }
+          const json = JSON.parse(text);
+          const check = validateActionResponse(json);
+          if (check.ok) return { success: true, data: json };
+          return { success: false, error: check.error };
         } catch {
           return { success: true };
         }
       }
-      return { success: true };
     } catch {
-      // 4. Fallback: send via fire-and-forget no-cors POST / GET
-      try {
-        if (getUrl) {
-          await fetch(getUrl, { mode: 'no-cors' });
-        } else {
-          await fetch(scriptUrl, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: bodyStr,
-          });
-        }
-        return { success: true };
-      } catch (err: any) {
-        return { success: false, error: err?.message || 'Network error' };
+      // Fall through to proxy / no-cors fallback
+    }
+
+    // 3. Try Netlify proxy in production if direct browser requests were blocked
+    const proxyResult = await tryNetlifyProxy();
+    if (proxyResult) return proxyResult;
+
+    // 4. Last-resort fire-and-forget no-cors GET / POST
+    try {
+      if (getUrl) {
+        await fetch(getUrl, { mode: 'no-cors' });
+      } else {
+        await fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: bodyStr,
+        });
       }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error' };
     }
   },
   clearLogs() {
@@ -950,11 +976,14 @@ export const adminSheetService = {
       blockedBy: data.blockedBy?.trim() || this.getAdminUser()?.email || 'Administrator',
     };
 
-    const recentlyBlocked = this.getRecentlyBlocked();
+    const prevRecentlyBlocked = this.getRecentlyBlocked();
+    const prevRecentlyUnblocked = this.getRecentlyUnblocked();
+
+    const recentlyBlocked = { ...prevRecentlyBlocked };
     recentlyBlocked[cleanKey] = { blockedUser: newBlocked, timestamp: Date.now() };
     this.saveRecentlyBlocked(recentlyBlocked);
 
-    const recentlyUnblocked = this.getRecentlyUnblocked();
+    const recentlyUnblocked = { ...prevRecentlyUnblocked };
     delete recentlyUnblocked[cleanKey];
     if (data.email) {
       delete recentlyUnblocked[normalizeIdentifier(data.email)];
@@ -987,8 +1016,11 @@ export const adminSheetService = {
       blockedBy: newBlocked.blockedBy,
       timestamp: newBlocked.timestamp,
     });
-    if (!res.success && res.error) {
-      return { success: false, error: res.error };
+    if (!res.success) {
+      this.saveRecentlyBlocked(prevRecentlyBlocked);
+      this.saveRecentlyUnblocked(prevRecentlyUnblocked);
+      this.setBlockedUsers(current, true);
+      return { success: false, error: res.error || 'Failed to sync block to Google Sheet' };
     }
     return { success: true, data: newBlocked };
   },
@@ -1003,8 +1035,10 @@ export const adminSheetService = {
     const allIds = [cleanId, ...(altIds || [])].map((id) => (id || '').trim()).filter(Boolean);
     const matchSet = new Set(allIds.map(normalizeIdentifier).filter((k) => !INVALID_IDENTIFIERS.has(k)));
 
-    const recentlyUnblocked = this.getRecentlyUnblocked();
-    const recentlyBlocked = this.getRecentlyBlocked();
+    const prevRecentlyUnblocked = this.getRecentlyUnblocked();
+    const prevRecentlyBlocked = this.getRecentlyBlocked();
+    const recentlyUnblocked = { ...prevRecentlyUnblocked };
+    const recentlyBlocked = { ...prevRecentlyBlocked };
     const now = Date.now();
     for (const key of matchSet) {
       recentlyUnblocked[key] = now;
@@ -1028,6 +1062,11 @@ export const adminSheetService = {
       userId: cleanId,
       altIds: allIds,
     });
+    if (!res.success) {
+      this.saveRecentlyUnblocked(prevRecentlyUnblocked);
+      this.saveRecentlyBlocked(prevRecentlyBlocked);
+      this.setBlockedUsers(current, true);
+    }
     return { success: res.success, error: res.error };
   },
 
