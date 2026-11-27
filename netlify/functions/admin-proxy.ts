@@ -42,7 +42,14 @@ export const handler: Handler = async (event) => {
       try {
         responseJson = JSON.parse(responseText);
       } catch {
-        responseJson = { success: response.ok, raw: responseText };
+        return {
+          statusCode: 502,
+          headers,
+          body: JSON.stringify({
+            success: false,
+            error: 'Google Apps Script returned a non-JSON response. Verify Web App URL and "Who has access: Anyone".',
+          }),
+        };
       }
       return {
         statusCode: response.status || 200,
@@ -81,7 +88,14 @@ export const handler: Handler = async (event) => {
     try {
       responseJson = JSON.parse(responseText);
     } catch {
-      responseJson = { success: response.ok, raw: responseText };
+      return {
+        statusCode: 502,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: 'Google Apps Script returned a non-JSON response. Verify Web App URL and "Who has access: Anyone".',
+        }),
+      };
     }
 
     return {
